@@ -1,0 +1,16 @@
+version: "3.3"
+
+services:
+  mcp-atlassian:
+    image: ghcr.io/smartycoder/mcp-atlassian:latest
+    container_name: mcp-atlassian
+    ports:
+      - "9000:9000"
+    environment:
+      JIRA_URL: "https://jira.example.com"
+      JIRA_SSL_VERIFY: "false"
+      # Dummy PAT to enable config - actual PAT comes from Bearer header per-request
+      JIRA_PERSONAL_TOKEN: "dummy"
+      MCP_LOGGING_STDOUT: "true"
+      MCP_VERBOSE: "true"
+    command: ["--transport", "streamable-http", "--port", "9000", "-vv"]

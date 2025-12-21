@@ -25,7 +25,7 @@ from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
 
 from .confluence import confluence_mcp
-from .context import MainAppContext
+from .context import MainAppContext, UserAuthContext, user_auth_context
 from .jira import jira_mcp
 
 logger = logging.getLogger("mcp-atlassian.server.main")
@@ -279,7 +279,11 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                     f"UserTokenMiddleware.dispatch: Bearer token extracted (masked): ...{mask_sensitive(token, 8)}"
                 )
                 request.state.user_atlassian_token = token
-                request.state.user_atlassian_auth_type = "oauth"
+                # If cloud_id is provided, treat as OAuth (Cloud), otherwise treat as PAT (Server/DC)
+                if cloud_id_header and cloud_id_header.strip():
+                    request.state.user_atlassian_auth_type = "oauth"
+                else:
+                    request.state.user_atlassian_auth_type = "pat"
                 request.state.user_atlassian_email = None
                 logger.debug(
                     f"UserTokenMiddleware.dispatch: Set request.state (pre-validation): "
@@ -303,6 +307,23 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 )
                 logger.debug(
                     "UserTokenMiddleware.dispatch: Set request.state for PAT auth."
+                )
+
+            # Set contextvar for user authentication (works across async contexts)
+            user_token = getattr(request.state, "user_atlassian_token", None)
+            user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
+            user_email = getattr(request.state, "user_atlassian_email", None)
+            user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
+            if user_token and user_auth_type:
+                user_auth_ctx = UserAuthContext(
+                    auth_type=user_auth_type,
+                    token=user_token,
+                    email=user_email,
+                    cloud_id=user_cloud_id,
+                )
+                user_auth_context.set(user_auth_ctx)
+                logger.debug(
+                    f"UserTokenMiddleware.dispatch: Set user_auth_context: auth_type='{user_auth_type}', token_present=True, cloud_id='{user_cloud_id}'"
                 )
             elif auth_header:
                 logger.warning(
