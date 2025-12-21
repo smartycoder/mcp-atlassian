@@ -3,8 +3,8 @@
 ![PyPI Version](https://img.shields.io/pypi/v/mcp-atlassian)
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/mcp-atlassian)
 ![PePy - Total Downloads](https://static.pepy.tech/personalized-badge/mcp-atlassian?period=total&units=international_system&left_color=grey&right_color=blue&left_text=Total%20Downloads)
-[![Run Tests](https://github.com/sooperset/mcp-atlassian/actions/workflows/tests.yml/badge.svg)](https://github.com/sooperset/mcp-atlassian/actions/workflows/tests.yml)
-![License](https://img.shields.io/github/license/sooperset/mcp-atlassian)
+[![Run Tests](https://github.com/smartycoder/mcp-atlassian/actions/workflows/tests.yml/badge.svg)](https://github.com/smartycoder/mcp-atlassian/actions/workflows/tests.yml)
+![License](https://img.shields.io/github/license/smartycoder/mcp-atlassian)
 
 Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira). This integration supports both Confluence & Jira Cloud and Server/Data Center deployments.
 
@@ -68,7 +68,7 @@ MCP Atlassian supports three authentication methods:
    docker run --rm -i \
      -p 8080:8080 \
      -v "${HOME}/.mcp-atlassian:/home/app/.mcp-atlassian" \
-     ghcr.io/sooperset/mcp-atlassian:latest --oauth-setup -v
+     ghcr.io/smartycoder/mcp-atlassian:latest --oauth-setup -v
    ```
 6. Follow prompts for `Client ID`, `Secret`, `URI`, and `Scope`
 7. Complete browser authorization
@@ -115,7 +115,7 @@ MCP Atlassian is distributed as a Docker image. This is the recommended way to r
 
 ```bash
 # Pull Pre-built Image
-docker pull ghcr.io/sooperset/mcp-atlassian:latest
+docker pull ghcr.io/smartycoder/mcp-atlassian:latest
 ```
 
 ## 🛠️ IDE Integration
@@ -147,7 +147,7 @@ There are two main approaches to configure the Docker container:
 > - `MCP_LOGGING_STDOUT`: Set to "true" to log to stdout instead of stderr
 > - `ENABLED_TOOLS`: Comma-separated list of tool names to enable (e.g., "confluence_search,jira_get_issue")
 >
-> See the [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) file for all available options.
+> See the [.env.example](https://github.com/smartycoder/mcp-atlassian/blob/main/.env.example) file for all available options.
 
 
 ### 📝 Configuration Examples
@@ -168,7 +168,7 @@ There are two main approaches to configure the Docker container:
         "-e", "JIRA_URL",
         "-e", "JIRA_USERNAME",
         "-e", "JIRA_API_TOKEN",
-        "ghcr.io/sooperset/mcp-atlassian:latest"
+        "ghcr.io/smartycoder/mcp-atlassian:latest"
       ],
       "env": {
         "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
@@ -197,7 +197,7 @@ There are two main approaches to configure the Docker container:
         "-i",
         "--env-file",
         "/path/to/your/mcp-atlassian.env",
-        "ghcr.io/sooperset/mcp-atlassian:latest"
+        "ghcr.io/smartycoder/mcp-atlassian:latest"
       ]
     }
   }
@@ -225,7 +225,7 @@ For Server/Data Center deployments, use direct variable passing:
         "-e", "JIRA_URL",
         "-e", "JIRA_PERSONAL_TOKEN",
         "-e", "JIRA_SSL_VERIFY",
-        "ghcr.io/sooperset/mcp-atlassian:latest"
+        "ghcr.io/smartycoder/mcp-atlassian:latest"
       ],
       "env": {
         "CONFLUENCE_URL": "https://confluence.your-company.com",
@@ -272,7 +272,7 @@ This configuration is for when you use the server's built-in OAuth client and ha
         "-e", "ATLASSIAN_OAUTH_REDIRECT_URI",
         "-e", "ATLASSIAN_OAUTH_SCOPE",
         "-e", "ATLASSIAN_OAUTH_CLOUD_ID",
-        "ghcr.io/sooperset/mcp-atlassian:latest"
+        "ghcr.io/smartycoder/mcp-atlassian:latest"
       ],
       "env": {
         "JIRA_URL": "https://your-company.atlassian.net",
@@ -312,7 +312,7 @@ This configuration is for when you are providing your own externally managed OAu
         "-e", "CONFLUENCE_URL",
         "-e", "ATLASSIAN_OAUTH_CLOUD_ID",
         "-e", "ATLASSIAN_OAUTH_ACCESS_TOKEN",
-        "ghcr.io/sooperset/mcp-atlassian:latest"
+        "ghcr.io/smartycoder/mcp-atlassian:latest"
       ],
       "env": {
         "JIRA_URL": "https://your-company.atlassian.net",
@@ -357,7 +357,7 @@ Add the relevant proxy variables to the `args` (using `-e`) and `env` sections o
         "-e", "HTTP_PROXY",
         "-e", "HTTPS_PROXY",
         "-e", "NO_PROXY",
-        "ghcr.io/sooperset/mcp-atlassian:latest"
+        "ghcr.io/smartycoder/mcp-atlassian:latest"
       ],
       "env": {
         "... existing Confluence/Jira vars": "...",
@@ -397,7 +397,7 @@ Custom headers are configured using environment variables with comma-separated k
         "-e", "JIRA_USERNAME",
         "-e", "JIRA_API_TOKEN",
         "-e", "JIRA_CUSTOM_HEADERS",
-        "ghcr.io/sooperset/mcp-atlassian:latest"
+        "ghcr.io/smartycoder/mcp-atlassian:latest"
       ],
       "env": {
         "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
@@ -425,16 +425,38 @@ Custom headers are configured using environment variables with comma-separated k
 
 
 <details>
-<summary>Multi-Cloud OAuth Support</summary>
+<summary>Multi-User Authentication Support</summary>
 
-MCP Atlassian supports multi-cloud OAuth scenarios where each user connects to their own Atlassian cloud instance. This is useful for multi-tenant applications, chatbots, or services where users provide their own OAuth tokens.
+MCP Atlassian supports multi-user scenarios where each user connects with their own credentials. This works for both Cloud (OAuth) and Server/Data Center (PAT) deployments.
 
-**Minimal OAuth Configuration:**
+**Authentication Methods:**
+
+| Deployment | Header Format | Description |
+|------------|---------------|-------------|
+| **Cloud (OAuth)** | `Authorization: Bearer <token>` + `X-Atlassian-Cloud-Id: <cloud_id>` | Each user provides their OAuth token and cloud ID |
+| **Server/DC (PAT)** | `Authorization: Bearer <token>` | Each user provides their Personal Access Token |
+
+**Minimal Configuration for Server/Data Center (PAT):**
+
+1. Start with a dummy PAT for config initialization:
+   ```bash
+   docker run -p 9000:9000 \
+     -e JIRA_URL=https://jira.your-company.com \
+     -e JIRA_PERSONAL_TOKEN=dummy \
+     -e JIRA_SSL_VERIFY=false \
+     ghcr.io/smartycoder/mcp-atlassian:latest \
+     --transport streamable-http --port 9000
+   ```
+
+2. Users provide their PAT via HTTP header:
+   - `Authorization: Bearer <user_personal_access_token>`
+
+**Minimal OAuth Configuration (Cloud):**
 
 1. Enable minimal OAuth mode (no client credentials required):
    ```bash
    docker run -e ATLASSIAN_OAUTH_ENABLE=true -p 9000:9000 \
-     ghcr.io/sooperset/mcp-atlassian:latest \
+     ghcr.io/smartycoder/mcp-atlassian:latest \
      --transport streamable-http --port 9000
    ```
 
@@ -478,8 +500,9 @@ asyncio.run(main())
 **Configuration Notes:**
 - Each request can use a different cloud instance via the `X-Atlassian-Cloud-Id` header
 - User tokens are isolated per request - no cross-tenant data leakage
-- Falls back to global `ATLASSIAN_OAUTH_CLOUD_ID` if header not provided
-- Compatible with standard OAuth 2.0 bearer token authentication
+- Falls back to global configuration if no `Authorization` header provided
+- **Server/DC**: Bearer token without `X-Atlassian-Cloud-Id` is treated as PAT
+- **Cloud**: Bearer token with `X-Atlassian-Cloud-Id` is treated as OAuth token
 
 </details>
 
@@ -499,7 +522,7 @@ asyncio.run(main())
         "-e", "CONFLUENCE_URL",
         "-e", "CONFLUENCE_USERNAME",
         "-e", "CONFLUENCE_API_TOKEN",
-        "ghcr.io/sooperset/mcp-atlassian:latest"
+        "ghcr.io/smartycoder/mcp-atlassian:latest"
       ],
       "env": {
         "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
@@ -523,7 +546,7 @@ For Confluence Server/DC, use:
         "-i",
         "-e", "CONFLUENCE_URL",
         "-e", "CONFLUENCE_PERSONAL_TOKEN",
-        "ghcr.io/sooperset/mcp-atlassian:latest"
+        "ghcr.io/smartycoder/mcp-atlassian:latest"
       ],
       "env": {
         "CONFLUENCE_URL": "https://confluence.your-company.com",
@@ -548,7 +571,7 @@ For Confluence Server/DC, use:
         "-e", "JIRA_URL",
         "-e", "JIRA_USERNAME",
         "-e", "JIRA_API_TOKEN",
-        "ghcr.io/sooperset/mcp-atlassian:latest"
+        "ghcr.io/smartycoder/mcp-atlassian:latest"
       ],
       "env": {
         "JIRA_URL": "https://your-company.atlassian.net",
@@ -572,7 +595,7 @@ For Jira Server/DC, use:
         "-i",
         "-e", "JIRA_URL",
         "-e", "JIRA_PERSONAL_TOKEN",
-        "ghcr.io/sooperset/mcp-atlassian:latest"
+        "ghcr.io/smartycoder/mcp-atlassian:latest"
       ],
       "env": {
         "JIRA_URL": "https://jira.your-company.com",
@@ -607,13 +630,13 @@ Both transport types support single-user and multi-user authentication:
     # For SSE transport
     docker run --rm -p 9000:9000 \
       --env-file /path/to/your/.env \
-      ghcr.io/sooperset/mcp-atlassian:latest \
+      ghcr.io/smartycoder/mcp-atlassian:latest \
       --transport sse --port 9000 -vv
 
     # OR for streamable-http transport
     docker run --rm -p 9000:9000 \
       --env-file /path/to/your/.env \
-      ghcr.io/sooperset/mcp-atlassian:latest \
+      ghcr.io/smartycoder/mcp-atlassian:latest \
       --transport streamable-http --port 9000 -vv
     ```
 
@@ -651,14 +674,14 @@ Here's a complete example of setting up multi-user authentication with streamabl
    docker run --rm -i \
      -p 8080:8080 \
      -v "${HOME}/.mcp-atlassian:/home/app/.mcp-atlassian" \
-     ghcr.io/sooperset/mcp-atlassian:latest --oauth-setup -v
+     ghcr.io/smartycoder/mcp-atlassian:latest --oauth-setup -v
    ```
 
 2. Start the server with streamable-HTTP transport:
    ```bash
    docker run --rm -p 9000:9000 \
      --env-file /path/to/your/.env \
-     ghcr.io/sooperset/mcp-atlassian:latest \
+     ghcr.io/smartycoder/mcp-atlassian:latest \
      --transport streamable-http --port 9000 -vv
    ```
 
@@ -676,7 +699,8 @@ Here's a complete example of setting up multi-user authentication with streamabl
     "mcp-atlassian-service": {
       "url": "http://localhost:9000/mcp",
       "headers": {
-        "Authorization": "Bearer <USER_OAUTH_ACCESS_TOKEN>"
+        "Authorization": "Bearer <USER_OAUTH_ACCESS_TOKEN>",
+        "X-Atlassian-Cloud-Id": "<USER_CLOUD_ID>"
       }
     }
   }
@@ -690,12 +714,17 @@ Here's a complete example of setting up multi-user authentication with streamabl
     "mcp-atlassian-service": {
       "url": "http://localhost:9000/mcp",
       "headers": {
-        "Authorization": "Token <USER_PERSONAL_ACCESS_TOKEN>"
+        "Authorization": "Bearer <USER_PERSONAL_ACCESS_TOKEN>"
       }
     }
   }
 }
 ```
+
+> [!NOTE]
+> The server distinguishes between Cloud and Server/DC authentication based on the presence of `X-Atlassian-Cloud-Id` header:
+> - **With** `X-Atlassian-Cloud-Id` header → treats Bearer token as OAuth (Cloud)
+> - **Without** `X-Atlassian-Cloud-Id` header → treats Bearer token as PAT (Server/DC)
 
 4. Required environment variables in `.env`:
    ```bash
