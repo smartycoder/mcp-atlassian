@@ -41,6 +41,59 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             logger.error(f"Error getting all projects: {str(e)}")
             return []
 
+    def get_recent_projects(self, limit: int = 10) -> list[dict[str, Any]]:
+        """
+        Get recently accessed projects for the current user.
+
+        For Jira Cloud, uses the /project/recent endpoint.
+        For Jira Server/Data Center, extracts unique projects from recently viewed issues.
+
+        Args:
+            limit: Maximum number of recent projects to return (default 10, max 20)
+
+        Returns:
+            List of recently accessed project data dictionaries
+        """
+        try:
+            # First try the Cloud API endpoint
+            url = f"rest/api/2/project/recent?maxResults={min(limit, 20)}"
+            response = self.jira.get(url)
+            if isinstance(response, list) and len(response) > 0:
+                return response
+        except Exception as e:
+            logger.debug(f"Cloud recent projects endpoint not available: {str(e)}")
+
+        # Fallback for Jira Server: get unique projects from recently viewed issues
+        try:
+            jql = "issuekey in issueHistory() order by lastViewed DESC"
+            # Fetch more issues to ensure we get enough unique projects
+            result = self.jira.jql(jql=jql, fields="project", limit=100)
+
+            if not isinstance(result, dict):
+                return []
+
+            issues = result.get("issues", [])
+            seen_keys: set[str] = set()
+            projects: list[dict[str, Any]] = []
+
+            for issue in issues:
+                fields = issue.get("fields", {})
+                project = fields.get("project", {})
+                project_key = project.get("key")
+
+                if project_key and project_key not in seen_keys:
+                    seen_keys.add(project_key)
+                    projects.append(project)
+
+                    if len(projects) >= limit:
+                        break
+
+            return projects
+
+        except Exception as e:
+            logger.error(f"Error getting recent projects: {str(e)}")
+            return []
+
     def get_project(self, project_key: str) -> dict[str, Any] | None:
         """
         Get project information by key.

@@ -7,8 +7,8 @@ services:
     ports:
       - "9000:9000"
     environment:
-      JIRA_URL: "${JIRA_URL}"
-      JIRA_SSL_VERIFY: "${JIRA_SSL_VERIFY:-true}"
+      JIRA_URL: "https://jira.example.com"
+      JIRA_SSL_VERIFY: "false"
       JIRA_PERSONAL_TOKEN: "${JIRA_PERSONAL_TOKEN}"
       MCP_LOGGING_STDOUT: "true"
       MCP_VERBOSE: "true"

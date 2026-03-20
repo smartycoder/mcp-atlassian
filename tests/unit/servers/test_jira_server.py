@@ -290,6 +290,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_link_types,
         get_project_issues,
         get_project_versions,
+        get_recently_viewed,
         get_sprint_issues,
         get_sprints_from_board,
         get_transitions,
@@ -307,6 +308,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp = FastMCP(name="TestJiraSubMCP")
     jira_sub_mcp.tool()(get_issue)
     jira_sub_mcp.tool()(search)
+    jira_sub_mcp.tool()(get_recently_viewed)
     jira_sub_mcp.tool()(search_fields)
     jira_sub_mcp.tool()(get_project_issues)
     jira_sub_mcp.tool()(get_project_versions)
@@ -461,6 +463,63 @@ async def test_search(jira_client, mock_jira_fetcher):
         projects_filter=None,
         expand=None,
     )
+
+
+@pytest.mark.anyio
+async def test_get_recently_viewed(jira_client, mock_jira_fetcher):
+    """Test the get_recently_viewed tool returns recently viewed issues."""
+    response = await jira_client.call_tool(
+        "jira_get_recently_viewed",
+        {
+            "fields": "summary,status",
+            "limit": 10,
+            "start_at": 0,
+        },
+    )
+    assert isinstance(response, list)
+    assert len(response) > 0
+    text_content = response[0]
+    assert text_content.type == "text"
+    content = json.loads(text_content.text)
+    assert isinstance(content, dict)
+    assert "issues" in content
+    assert isinstance(content["issues"], list)
+    assert len(content["issues"]) >= 1
+    assert content["total"] > 0
+    assert content["start_at"] == 0
+    assert content["max_results"] == 10
+    # Verify the correct JQL was used
+    mock_jira_fetcher.search_issues.assert_called_once_with(
+        jql="issuekey in issueHistory() order by lastViewed DESC",
+        fields=["summary", "status"],
+        limit=10,
+        start=0,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_recently_viewed_default_params(jira_client, mock_jira_fetcher):
+    """Test the get_recently_viewed tool with default parameters."""
+    # Reset the mock to clear previous calls
+    mock_jira_fetcher.search_issues.reset_mock()
+
+    response = await jira_client.call_tool(
+        "jira_get_recently_viewed",
+        {},
+    )
+    assert isinstance(response, list)
+    assert len(response) > 0
+    text_content = response[0]
+    assert text_content.type == "text"
+    content = json.loads(text_content.text)
+    assert isinstance(content, dict)
+    assert "issues" in content
+    # Verify the default JQL and parameters were used
+    mock_jira_fetcher.search_issues.assert_called_once()
+    call_kwargs = mock_jira_fetcher.search_issues.call_args
+    assert call_kwargs[1]["jql"] == "issuekey in issueHistory() order by lastViewed DESC"
+    assert call_kwargs[1]["limit"] == 10
+    assert call_kwargs[1]["start"] == 0
 
 
 @pytest.mark.anyio

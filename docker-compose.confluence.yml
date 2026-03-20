@@ -1,0 +1,17 @@
+version: "3.3"
+
+services:
+  mcp-confluence:
+    # image: ghcr.io/smartycoder/mcp-atlassian:latest
+    image: docker.io/mikgr/mcp-atlassian:latest
+    container_name: mcp-confluence
+    ports:
+      - "5555:5555"
+    environment:
+      CONFLUENCE_URL: "https://confluence.mikrografija.si"
+      CONFLUENCE_SSL_VERIFY: "false"
+      # Dummy PAT to enable config - actual PAT comes from Bearer header per-request
+      CONFLUENCE_PERSONAL_TOKEN: "dummy"
+      MCP_LOGGING_STDOUT: "true"
+      MCP_VERBOSE: "true"
+    command: ["--transport", "streamable-http", "--port", "5555", "-vv"]

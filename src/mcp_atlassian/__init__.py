@@ -108,6 +108,19 @@ logger = setup_logging(logging_level, logging_stream)
     help="Comma-separated list of Jira project keys to filter search results",
 )
 @click.option(
+    "--bitbucket-url",
+    help="Bitbucket Server/Data Center URL (e.g., https://bitbucket.your-company.com)",
+)
+@click.option(
+    "--bitbucket-personal-token",
+    help="Bitbucket Personal Access Token (for Bitbucket Server/Data Center)",
+)
+@click.option(
+    "--bitbucket-ssl-verify/--no-bitbucket-ssl-verify",
+    default=True,
+    help="Verify SSL certificates for Bitbucket Server/Data Center (default: verify)",
+)
+@click.option(
     "--read-only",
     is_flag=True,
     help="Run in read-only mode (disables all write operations)",
@@ -161,6 +174,9 @@ def main(
     jira_personal_token: str | None,
     jira_ssl_verify: bool,
     jira_projects_filter: str | None,
+    bitbucket_url: str | None,
+    bitbucket_personal_token: str | None,
+    bitbucket_ssl_verify: bool,
     read_only: bool,
     enabled_tools: str | None,
     oauth_client_id: str | None,
@@ -170,13 +186,14 @@ def main(
     oauth_cloud_id: str | None,
     oauth_access_token: str | None,
 ) -> None:
-    """MCP Atlassian Server - Jira and Confluence functionality for MCP
+    """MCP Atlassian Server - Jira, Confluence and Bitbucket functionality for MCP
 
-    Supports both Atlassian Cloud and Jira Server/Data Center deployments.
+    Supports both Atlassian Cloud and Server/Data Center deployments.
     Authentication methods supported:
     - Username and API token (Cloud)
     - Personal Access Token (Server/Data Center)
     - OAuth 2.0 (Cloud only)
+    - Bitbucket Server/DC via Personal Access Token
     """
     # Logging level logic
     if verbose == 1:
@@ -305,6 +322,12 @@ def main(
         os.environ["JIRA_SSL_VERIFY"] = str(jira_ssl_verify).lower()
     if click_ctx and was_option_provided(click_ctx, "jira_projects_filter"):
         os.environ["JIRA_PROJECTS_FILTER"] = jira_projects_filter
+    if click_ctx and was_option_provided(click_ctx, "bitbucket_url"):
+        os.environ["BITBUCKET_URL"] = bitbucket_url
+    if click_ctx and was_option_provided(click_ctx, "bitbucket_personal_token"):
+        os.environ["BITBUCKET_PERSONAL_TOKEN"] = bitbucket_personal_token
+    if click_ctx and was_option_provided(click_ctx, "bitbucket_ssl_verify"):
+        os.environ["BITBUCKET_SSL_VERIFY"] = str(bitbucket_ssl_verify).lower()
 
     from mcp_atlassian.servers import main_mcp
 

@@ -251,6 +251,56 @@ async def search(
 
 
 @jira_mcp.tool(tags={"jira", "read"})
+async def get_recently_viewed(
+    ctx: Context,
+    fields: Annotated[
+        str,
+        Field(
+            description=(
+                "(Optional) Comma-separated fields to return in the results. "
+                "Use '*all' for all fields, or specify individual fields like 'summary,status,assignee,priority'"
+            ),
+            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+        ),
+    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=10, ge=1),
+    ] = 10,
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+) -> str:
+    """Get recently viewed Jira issues from the current user's view history.
+
+    Returns issues that the current user has recently viewed, ordered by last viewed date (most recent first).
+
+    Args:
+        ctx: The FastMCP context.
+        fields: Comma-separated fields to return.
+        limit: Maximum number of results.
+        start_at: Starting index for pagination.
+
+    Returns:
+        JSON string representing the search results including pagination info.
+    """
+    jira = await get_jira_fetcher(ctx)
+    fields_list: str | list[str] | None = fields
+    if fields and fields != "*all":
+        fields_list = [f.strip() for f in fields.split(",")]
+
+    search_result = jira.search_issues(
+        jql="issuekey in issueHistory() order by lastViewed DESC",
+        fields=fields_list,
+        limit=limit,
+        start=start_at,
+    )
+    result = search_result.to_simplified_dict()
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
 async def search_fields(
     ctx: Context,
     keyword: Annotated[
@@ -1529,6 +1579,41 @@ async def get_all_projects(
             for project in projects
             if project.get("key") in allowed_project_keys
         ]
+
+    return json.dumps(projects, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_recent_projects(
+    ctx: Context,
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of recent projects to return (1-20)",
+            default=10,
+            ge=1,
+            le=20,
+        ),
+    ] = 10,
+) -> str:
+    """Get recently accessed Jira projects for the current user.
+
+    Returns projects that the current user has recently accessed, ordered by last access time.
+
+    Args:
+        ctx: The FastMCP context.
+        limit: Maximum number of results.
+
+    Returns:
+        JSON string representing a list of recently accessed project objects.
+    """
+    jira = await get_jira_fetcher(ctx)
+    projects = jira.get_recent_projects(limit=limit)
+
+    # Ensure all project keys are uppercase
+    for project in projects:
+        if "key" in project:
+            project["key"] = project["key"].upper()
 
     return json.dumps(projects, indent=2, ensure_ascii=False)
 

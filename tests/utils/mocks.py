@@ -59,6 +59,9 @@ class MockEnvironment:
             "ATLASSIAN_OAUTH_SCOPE",
             "ATLASSIAN_OAUTH_CLOUD_ID",
             "ATLASSIAN_OAUTH_ENABLE",
+            "BITBUCKET_URL",
+            "BITBUCKET_PERSONAL_TOKEN",
+            "BITBUCKET_SSL_VERIFY",
         ]
 
         # Remove auth vars from environment

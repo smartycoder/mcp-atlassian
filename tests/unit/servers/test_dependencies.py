@@ -6,11 +6,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from mcp_atlassian.bitbucket import BitbucketConfig, BitbucketFetcher
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
-from mcp_atlassian.servers.context import MainAppContext
+from mcp_atlassian.servers.context import MainAppContext, UserAuthContext, user_auth_context
 from mcp_atlassian.servers.dependencies import (
     _create_user_config_for_fetcher,
+    get_bitbucket_fetcher,
     get_confluence_fetcher,
     get_jira_fetcher,
 )
@@ -79,6 +81,16 @@ def config_factory():
             return ConfluenceConfig(**{**defaults, **overrides})
 
         @staticmethod
+        def create_bitbucket_config(**overrides):
+            """Create a BitbucketConfig instance."""
+            defaults = {
+                "url": "https://bitbucket.example.com",
+                "personal_token": "global-bb-pat",
+                "ssl_verify": True,
+            }
+            return BitbucketConfig(**{**defaults, **overrides})
+
+        @staticmethod
         def create_oauth_config(**overrides):
             """Create an OAuthConfig instance."""
             oauth_data = AuthConfigFactory.create_oauth_config(**overrides)
@@ -94,12 +106,18 @@ def config_factory():
             )
 
         @staticmethod
-        def create_app_context(jira_config=None, confluence_config=None, **overrides):
+        def create_app_context(
+            jira_config=None,
+            confluence_config=None,
+            bitbucket_config=None,
+            **overrides,
+        ):
             """Create a MainAppContext instance."""
             defaults = {
                 "full_jira_config": jira_config or ConfigFactory.create_jira_config(),
                 "full_confluence_config": confluence_config
                 or ConfigFactory.create_confluence_config(),
+                "full_bitbucket_config": bitbucket_config,
                 "read_only": False,
                 "enabled_tools": ["jira_get_issue", "confluence_get_page"],
             }
@@ -169,6 +187,44 @@ def _assert_config_attributes(
         assert config.username is None
         assert config.api_token is None
         assert config.oauth_config is None
+
+
+def _set_user_auth_context(auth_type=None, token=None, email=None, cloud_id=None):
+    """Helper to set the user_auth_context contextvar for a test."""
+    ctx = UserAuthContext(
+        auth_type=auth_type, token=token, email=email, cloud_id=cloud_id
+    )
+    return user_auth_context.set(ctx)
+
+
+def _setup_mock_context(mock_context, app_context):
+    """Helper to setup mock context with app context."""
+    mock_context.request_context.lifespan_context = {
+        "app_lifespan_context": app_context
+    }
+
+
+def _create_mock_fetcher(fetcher_class, validation_return=None, validation_error=None):
+    """Helper to create mock fetcher with validation behavior."""
+    mock_fetcher = MagicMock(spec=fetcher_class)
+
+    if fetcher_class == JiraFetcher:
+        if validation_error:
+            mock_fetcher.get_current_user_account_id.side_effect = validation_error
+        else:
+            mock_fetcher.get_current_user_account_id.return_value = (
+                validation_return or "test-account-id"
+            )
+    elif fetcher_class == ConfluenceFetcher:
+        if validation_error:
+            mock_fetcher.get_current_user_info.side_effect = validation_error
+        else:
+            mock_fetcher.get_current_user_info.return_value = validation_return or {
+                "email": "user@example.com",
+                "displayName": "Test User",
+            }
+
+    return mock_fetcher
 
 
 class TestCreateUserConfigForFetcher:
@@ -368,449 +424,432 @@ class TestCreateUserConfigForFetcher:
             )
 
 
-def _setup_mock_request_state(mock_request, auth_scenario=None, cached_fetcher=None):
-    """Helper to setup mock request state."""
-    if cached_fetcher:
-        mock_request.state.jira_fetcher = cached_fetcher
-        mock_request.state.confluence_fetcher = cached_fetcher
-        return
-
-    mock_request.state.jira_fetcher = None
-    mock_request.state.confluence_fetcher = None
-
-    if auth_scenario:
-        mock_request.state.user_atlassian_auth_type = auth_scenario["auth_type"]
-        mock_request.state.user_atlassian_token = auth_scenario["token"]
-        mock_request.state.user_atlassian_email = auth_scenario["email"]
-    else:
-        mock_request.state.user_atlassian_auth_type = None
-        mock_request.state.user_atlassian_token = None
-        mock_request.state.user_atlassian_email = None
-
-
-def _setup_mock_context(mock_context, app_context):
-    """Helper to setup mock context with app context."""
-    mock_context.request_context.lifespan_context = {
-        "app_lifespan_context": app_context
-    }
-
-
-def _create_mock_fetcher(fetcher_class, validation_return=None, validation_error=None):
-    """Helper to create mock fetcher with validation behavior."""
-    mock_fetcher = MagicMock(spec=fetcher_class)
-
-    if fetcher_class == JiraFetcher:
-        if validation_error:
-            mock_fetcher.get_current_user_account_id.side_effect = validation_error
-        else:
-            mock_fetcher.get_current_user_account_id.return_value = (
-                validation_return or "test-account-id"
-            )
-    elif fetcher_class == ConfluenceFetcher:
-        if validation_error:
-            mock_fetcher.get_current_user_info.side_effect = validation_error
-        else:
-            mock_fetcher.get_current_user_info.return_value = validation_return or {
-                "email": "user@example.com",
-                "displayName": "Test User",
-            }
-
-    return mock_fetcher
-
-
 class TestGetJiraFetcher:
     """Tests for get_jira_fetcher function."""
 
-    @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
-    async def test_cached_fetcher_returned(
-        self, mock_jira_fetcher_class, mock_get_http_request, mock_context, mock_request
-    ):
-        """Test returning cached JiraFetcher from request state."""
-        cached_fetcher = MagicMock(spec=JiraFetcher)
-        _setup_mock_request_state(mock_request, cached_fetcher=cached_fetcher)
-        mock_get_http_request.return_value = mock_request
-
-        result = await get_jira_fetcher(mock_context)
-
-        assert result == cached_fetcher
-        mock_jira_fetcher_class.assert_not_called()
-
-    @pytest.mark.parametrize("scenario_key", ["oauth", "pat"])
-    @patch("mcp_atlassian.servers.dependencies.get_http_request")
-    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
-    async def test_user_specific_fetcher_creation(
+    async def test_user_specific_fetcher_pat(
         self,
         mock_jira_fetcher_class,
-        mock_get_http_request,
         mock_context,
-        mock_request,
         config_factory,
-        auth_scenarios,
-        scenario_key,
     ):
-        """Test creating user-specific JiraFetcher with different auth types."""
-        scenario = auth_scenarios[scenario_key]
-
-        # Setup request state
-        _setup_mock_request_state(mock_request, scenario)
-        mock_get_http_request.return_value = mock_request
-
-        # Setup context
-        jira_config = config_factory.create_jira_config(auth_type=scenario["auth_type"])
-        confluence_config = config_factory.create_confluence_config(
-            auth_type=scenario["auth_type"]
-        )
-        app_context = config_factory.create_app_context(jira_config, confluence_config)
+        """Test creating user-specific JiraFetcher when PAT is in contextvar."""
+        jira_config = config_factory.create_jira_config(auth_type="pat")
+        app_context = config_factory.create_app_context(jira_config)
         _setup_mock_context(mock_context, app_context)
 
-        # Setup mock fetcher
         mock_fetcher = _create_mock_fetcher(JiraFetcher)
         mock_jira_fetcher_class.return_value = mock_fetcher
 
+        token = user_auth_context.set(
+            UserAuthContext(auth_type="pat", token="user-pat-token", email="user@example.com")
+        )
+        try:
+            result = await get_jira_fetcher(mock_context)
+        finally:
+            user_auth_context.reset(token)
+
+        assert result == mock_fetcher
+        mock_jira_fetcher_class.assert_called_once()
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.auth_type == "pat"
+        assert called_config.personal_token == "user-pat-token"
+
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_user_specific_fetcher_oauth(
+        self,
+        mock_jira_fetcher_class,
+        mock_context,
+        config_factory,
+    ):
+        """Test creating user-specific JiraFetcher when OAuth token is in contextvar."""
+        jira_config = config_factory.create_jira_config(auth_type="oauth")
+        app_context = config_factory.create_app_context(jira_config)
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        token = user_auth_context.set(
+            UserAuthContext(
+                auth_type="oauth",
+                token="user-oauth-token",
+                email="user@example.com",
+                cloud_id="test-cloud-id",
+            )
+        )
+        try:
+            result = await get_jira_fetcher(mock_context)
+        finally:
+            user_auth_context.reset(token)
+
+        assert result == mock_fetcher
+        mock_jira_fetcher_class.assert_called_once()
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.auth_type == "oauth"
+        assert called_config.oauth_config.access_token == "user-oauth-token"
+
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_global_fallback_no_user_token(
+        self,
+        mock_jira_fetcher_class,
+        mock_context,
+        config_factory,
+    ):
+        """Test fallback to global JiraFetcher when no user token in contextvar."""
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        # No user_auth_context set — contextvar defaults to None
         result = await get_jira_fetcher(mock_context)
 
         assert result == mock_fetcher
-        assert mock_request.state.jira_fetcher == mock_fetcher
-        mock_jira_fetcher_class.assert_called_once()
+        assert_mock_called_with_partial(
+            mock_jira_fetcher_class, config=app_context.full_jira_config
+        )
 
-        # Verify the config passed to JiraFetcher
-        called_config = mock_jira_fetcher_class.call_args[1]["config"]
-        assert called_config.auth_type == scenario["auth_type"]
-
-        if scenario["auth_type"] == "oauth":
-            assert called_config.oauth_config.access_token == scenario["token"]
-        elif scenario["auth_type"] == "pat":
-            assert called_config.personal_token == scenario["token"]
-
-    @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
-    async def test_global_fallback_scenarios(
+    async def test_global_fallback_empty_contextvar(
         self,
         mock_jira_fetcher_class,
-        mock_get_http_request,
         mock_context,
-        mock_request,
         config_factory,
     ):
-        """Test fallback to global JiraFetcher in various scenarios."""
-        # Test both HTTP context without user token and non-HTTP context
-        test_scenarios = [
-            {"name": "no_user_token", "setup_http": True, "user_auth": None},
-            {"name": "no_http_context", "setup_http": False, "user_auth": None},
-        ]
+        """Test fallback to global JiraFetcher when contextvar has no token."""
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
 
-        for scenario in test_scenarios:
-            # Setup request state
-            if scenario["setup_http"]:
-                _setup_mock_request_state(mock_request)
-                mock_get_http_request.return_value = mock_request
-            else:
-                mock_get_http_request.side_effect = RuntimeError("No HTTP context")
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
 
-            # Setup context
-            app_context = config_factory.create_app_context()
-            _setup_mock_context(mock_context, app_context)
-
-            # Setup mock fetcher
-            mock_fetcher = _create_mock_fetcher(JiraFetcher)
-            mock_jira_fetcher_class.return_value = mock_fetcher
-
+        token = user_auth_context.set(UserAuthContext())  # No token/auth_type
+        try:
             result = await get_jira_fetcher(mock_context)
+        finally:
+            user_auth_context.reset(token)
 
-            assert result == mock_fetcher
-            assert_mock_called_with_partial(
-                mock_jira_fetcher_class, config=app_context.full_jira_config
-            )
+        assert result == mock_fetcher
+        assert_mock_called_with_partial(
+            mock_jira_fetcher_class, config=app_context.full_jira_config
+        )
 
-            # Reset mocks for next iteration
-            mock_jira_fetcher_class.reset_mock()
-            mock_get_http_request.reset_mock()
-
-    @pytest.mark.parametrize(
-        "error_scenario,expected_error_match",
-        [
-            ("missing_global_config", "Jira client \\(fetcher\\) not available"),
-            ("empty_user_token", "User Atlassian token found in state but is empty"),
-            ("validation_failure", "Invalid user Jira token or configuration"),
-            (
-                "missing_lifespan_context",
-                "Jira global configuration.*is not available from lifespan context",
-            ),
-        ],
-    )
-    @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
-    async def test_error_scenarios(
+    async def test_missing_global_config_raises(
         self,
         mock_jira_fetcher_class,
-        mock_get_http_request,
         mock_context,
-        mock_request,
-        config_factory,
-        auth_scenarios,
-        error_scenario,
-        expected_error_match,
     ):
-        """Test various error scenarios."""
-        if error_scenario == "missing_global_config":
-            mock_get_http_request.side_effect = RuntimeError("No HTTP context")
-            mock_context.request_context.lifespan_context = {}
+        """Test ValueError raised when no Jira config in lifespan context."""
+        mock_context.request_context.lifespan_context = {}
 
-        elif error_scenario == "empty_user_token":
-            scenario = auth_scenarios["oauth"].copy()
-            scenario["token"] = ""  # Empty token
-            _setup_mock_request_state(mock_request, scenario)
-            mock_get_http_request.return_value = mock_request
-            app_context = config_factory.create_app_context()
-            _setup_mock_context(mock_context, app_context)
-
-        elif error_scenario == "validation_failure":
-            scenario = auth_scenarios["pat"]
-            _setup_mock_request_state(mock_request, scenario)
-            mock_get_http_request.return_value = mock_request
-            app_context = config_factory.create_app_context()
-            _setup_mock_context(mock_context, app_context)
-
-            # Setup mock fetcher to fail validation
-            mock_fetcher = _create_mock_fetcher(
-                JiraFetcher, validation_error=Exception("Invalid token")
-            )
-            mock_jira_fetcher_class.return_value = mock_fetcher
-
-        elif error_scenario == "missing_lifespan_context":
-            scenario = auth_scenarios["oauth"]
-            _setup_mock_request_state(mock_request, scenario)
-            mock_get_http_request.return_value = mock_request
-            mock_context.request_context.lifespan_context = {}
-
-        with pytest.raises(ValueError, match=expected_error_match):
+        with pytest.raises(ValueError, match="Jira client \\(fetcher\\) not available"):
             await get_jira_fetcher(mock_context)
+
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_missing_lifespan_context_with_user_token(
+        self,
+        mock_jira_fetcher_class,
+        mock_context,
+    ):
+        """Test ValueError raised when user token present but no lifespan context."""
+        mock_context.request_context.lifespan_context = {}
+
+        token = user_auth_context.set(
+            UserAuthContext(auth_type="pat", token="some-pat", email="user@example.com")
+        )
+        try:
+            with pytest.raises(
+                ValueError,
+                match="Jira global configuration.*is not available from lifespan context",
+            ):
+                await get_jira_fetcher(mock_context)
+        finally:
+            user_auth_context.reset(token)
+
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_validation_failure_raises(
+        self,
+        mock_jira_fetcher_class,
+        mock_context,
+        config_factory,
+    ):
+        """Test ValueError raised when fetcher validation fails."""
+        jira_config = config_factory.create_jira_config(auth_type="pat")
+        app_context = config_factory.create_app_context(jira_config)
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(
+            JiraFetcher, validation_error=Exception("Invalid token")
+        )
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        token = user_auth_context.set(
+            UserAuthContext(auth_type="pat", token="bad-token", email="user@example.com")
+        )
+        try:
+            with pytest.raises(ValueError, match="Invalid user Jira token or configuration"):
+                await get_jira_fetcher(mock_context)
+        finally:
+            user_auth_context.reset(token)
 
 
 class TestGetConfluenceFetcher:
     """Tests for get_confluence_fetcher function."""
 
-    @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
-    async def test_cached_fetcher_returned(
+    async def test_user_specific_fetcher_pat(
         self,
         mock_confluence_fetcher_class,
-        mock_get_http_request,
         mock_context,
-        mock_request,
-    ):
-        """Test returning cached ConfluenceFetcher from request state."""
-        cached_fetcher = MagicMock(spec=ConfluenceFetcher)
-        _setup_mock_request_state(mock_request, cached_fetcher=cached_fetcher)
-        mock_get_http_request.return_value = mock_request
-
-        result = await get_confluence_fetcher(mock_context)
-
-        assert result == cached_fetcher
-        mock_confluence_fetcher_class.assert_not_called()
-
-    @pytest.mark.parametrize("scenario_key", ["oauth", "pat"])
-    @patch("mcp_atlassian.servers.dependencies.get_http_request")
-    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
-    async def test_user_specific_fetcher_creation(
-        self,
-        mock_confluence_fetcher_class,
-        mock_get_http_request,
-        mock_context,
-        mock_request,
         config_factory,
-        auth_scenarios,
-        scenario_key,
     ):
-        """Test creating user-specific ConfluenceFetcher with different auth types."""
-        scenario = auth_scenarios[scenario_key]
-
-        # Setup request state
-        _setup_mock_request_state(mock_request, scenario)
-        mock_get_http_request.return_value = mock_request
-
-        # Setup context
-        jira_config = config_factory.create_jira_config(auth_type=scenario["auth_type"])
-        confluence_config = config_factory.create_confluence_config(
-            auth_type=scenario["auth_type"]
-        )
-        app_context = config_factory.create_app_context(jira_config, confluence_config)
+        """Test creating user-specific ConfluenceFetcher when PAT is in contextvar."""
+        confluence_config = config_factory.create_confluence_config(auth_type="pat")
+        app_context = config_factory.create_app_context(confluence_config=confluence_config)
         _setup_mock_context(mock_context, app_context)
 
-        # Setup mock fetcher
+        mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.return_value = mock_fetcher
+
+        token = user_auth_context.set(
+            UserAuthContext(auth_type="pat", token="user-pat-token", email="user@example.com")
+        )
+        try:
+            result = await get_confluence_fetcher(mock_context)
+        finally:
+            user_auth_context.reset(token)
+
+        assert result == mock_fetcher
+        mock_confluence_fetcher_class.assert_called_once()
+        called_config = mock_confluence_fetcher_class.call_args[1]["config"]
+        assert called_config.auth_type == "pat"
+        assert called_config.personal_token == "user-pat-token"
+
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_user_specific_fetcher_oauth(
+        self,
+        mock_confluence_fetcher_class,
+        mock_context,
+        config_factory,
+    ):
+        """Test creating user-specific ConfluenceFetcher when OAuth token is in contextvar."""
+        confluence_config = config_factory.create_confluence_config(auth_type="oauth")
+        app_context = config_factory.create_app_context(confluence_config=confluence_config)
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.return_value = mock_fetcher
+
+        token = user_auth_context.set(
+            UserAuthContext(
+                auth_type="oauth",
+                token="user-oauth-token",
+                email="user@example.com",
+                cloud_id="test-cloud-id",
+            )
+        )
+        try:
+            result = await get_confluence_fetcher(mock_context)
+        finally:
+            user_auth_context.reset(token)
+
+        assert result == mock_fetcher
+        mock_confluence_fetcher_class.assert_called_once()
+        called_config = mock_confluence_fetcher_class.call_args[1]["config"]
+        assert called_config.auth_type == "oauth"
+        assert called_config.oauth_config.access_token == "user-oauth-token"
+
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_global_fallback_no_user_token(
+        self,
+        mock_confluence_fetcher_class,
+        mock_context,
+        config_factory,
+    ):
+        """Test fallback to global ConfluenceFetcher when no user token in contextvar."""
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+
         mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
         mock_confluence_fetcher_class.return_value = mock_fetcher
 
         result = await get_confluence_fetcher(mock_context)
 
         assert result == mock_fetcher
-        assert mock_request.state.confluence_fetcher == mock_fetcher
-        mock_confluence_fetcher_class.assert_called_once()
+        assert_mock_called_with_partial(
+            mock_confluence_fetcher_class,
+            config=app_context.full_confluence_config,
+        )
 
-        # Verify the config passed to ConfluenceFetcher
-        called_config = mock_confluence_fetcher_class.call_args[1]["config"]
-        assert called_config.auth_type == scenario["auth_type"]
-
-        if scenario["auth_type"] == "oauth":
-            assert called_config.oauth_config.access_token == scenario["token"]
-        elif scenario["auth_type"] == "pat":
-            assert called_config.personal_token == scenario["token"]
-
-    @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
-    async def test_global_fallback_scenarios(
+    async def test_missing_global_config_raises(
         self,
         mock_confluence_fetcher_class,
-        mock_get_http_request,
         mock_context,
-        mock_request,
-        config_factory,
     ):
-        """Test fallback to global ConfluenceFetcher in various scenarios."""
-        # Test both HTTP context without user token and non-HTTP context
-        test_scenarios = [
-            {"name": "no_user_token", "setup_http": True, "user_auth": None},
-            {"name": "no_http_context", "setup_http": False, "user_auth": None},
-        ]
+        """Test ValueError raised when no Confluence config in lifespan context."""
+        mock_context.request_context.lifespan_context = {}
 
-        for scenario in test_scenarios:
-            # Setup request state
-            if scenario["setup_http"]:
-                _setup_mock_request_state(mock_request)
-                mock_get_http_request.return_value = mock_request
-            else:
-                mock_get_http_request.side_effect = RuntimeError("No HTTP context")
+        with pytest.raises(
+            ValueError, match="Confluence client \\(fetcher\\) not available"
+        ):
+            await get_confluence_fetcher(mock_context)
 
-            # Setup context
-            app_context = config_factory.create_app_context()
-            _setup_mock_context(mock_context, app_context)
-
-            # Setup mock fetcher
-            mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
-            mock_confluence_fetcher_class.return_value = mock_fetcher
-
-            result = await get_confluence_fetcher(mock_context)
-
-            assert result == mock_fetcher
-            assert_mock_called_with_partial(
-                mock_confluence_fetcher_class, config=app_context.full_confluence_config
-            )
-
-            # Reset mocks for next iteration
-            mock_confluence_fetcher_class.reset_mock()
-            mock_get_http_request.reset_mock()
-
-    @pytest.mark.parametrize(
-        "email_scenario,expected_email",
-        [
-            ("derive_email", "derived@example.com"),
-            ("preserve_existing", "existing@example.com"),
-        ],
-    )
-    @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
-    async def test_email_derivation_behavior(
+    async def test_missing_lifespan_context_with_user_token(
         self,
         mock_confluence_fetcher_class,
-        mock_get_http_request,
         mock_context,
-        mock_request,
-        config_factory,
-        auth_scenarios,
-        email_scenario,
-        expected_email,
     ):
-        """Test email derivation behavior in different scenarios."""
-        scenario = auth_scenarios["pat"].copy()
+        """Test ValueError raised when user token present but no lifespan context."""
+        mock_context.request_context.lifespan_context = {}
 
-        if email_scenario == "derive_email":
-            scenario["email"] = None  # No existing email
-            user_info_email = "derived@example.com"
-        else:  # preserve_existing
-            scenario["email"] = "existing@example.com"
-            user_info_email = "different@example.com"
+        token = user_auth_context.set(
+            UserAuthContext(auth_type="pat", token="some-pat", email="user@example.com")
+        )
+        try:
+            with pytest.raises(
+                ValueError,
+                match="Confluence global configuration.*is not available from lifespan context",
+            ):
+                await get_confluence_fetcher(mock_context)
+        finally:
+            user_auth_context.reset(token)
 
-        # Setup request state
-        _setup_mock_request_state(mock_request, scenario)
-        mock_get_http_request.return_value = mock_request
-
-        # Setup context
-        app_context = config_factory.create_app_context()
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_validation_failure_raises(
+        self,
+        mock_confluence_fetcher_class,
+        mock_context,
+        config_factory,
+    ):
+        """Test ValueError raised when fetcher validation fails."""
+        confluence_config = config_factory.create_confluence_config(auth_type="pat")
+        app_context = config_factory.create_app_context(confluence_config=confluence_config)
         _setup_mock_context(mock_context, app_context)
 
-        # Setup mock fetcher with specific user info
         mock_fetcher = _create_mock_fetcher(
-            ConfluenceFetcher,
-            validation_return={
-                "email": user_info_email,
-                "displayName": "Test User",
-            },
+            ConfluenceFetcher, validation_error=Exception("Invalid token")
         )
         mock_confluence_fetcher_class.return_value = mock_fetcher
 
-        result = await get_confluence_fetcher(mock_context)
+        token = user_auth_context.set(
+            UserAuthContext(auth_type="pat", token="bad-token", email="user@example.com")
+        )
+        try:
+            with pytest.raises(
+                ValueError, match="Invalid user Confluence token or configuration"
+            ):
+                await get_confluence_fetcher(mock_context)
+        finally:
+            user_auth_context.reset(token)
+
+
+class TestGetBitbucketFetcher:
+    """Tests for get_bitbucket_fetcher function."""
+
+    async def test_get_bitbucket_fetcher_uses_user_token(
+        self,
+        mock_context,
+        config_factory,
+    ):
+        """Test that a user PAT from contextvar overrides the global token."""
+        bb_config = config_factory.create_bitbucket_config()
+        app_context = config_factory.create_app_context(bitbucket_config=bb_config)
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = MagicMock(spec=BitbucketFetcher)
+
+        token = user_auth_context.set(
+            UserAuthContext(auth_type="pat", token="user-bb-pat-token")
+        )
+        try:
+            with patch(
+                "mcp_atlassian.bitbucket.BitbucketFetcher",
+                return_value=mock_fetcher,
+            ) as mock_bb_class:
+                result = await get_bitbucket_fetcher(mock_context)
+        finally:
+            user_auth_context.reset(token)
 
         assert result == mock_fetcher
-        assert mock_request.state.confluence_fetcher == mock_fetcher
-        assert mock_request.state.user_atlassian_email == expected_email
+        mock_bb_class.assert_called_once()
+        called_config = mock_bb_class.call_args[1]["config"]
+        assert called_config.personal_token == "user-bb-pat-token"
+        # Base URL and ssl_verify should be preserved from global config
+        assert called_config.url == bb_config.url
+        assert called_config.ssl_verify == bb_config.ssl_verify
 
-    @pytest.mark.parametrize(
-        "error_scenario,expected_error_match",
-        [
-            ("missing_global_config", "Confluence client \\(fetcher\\) not available"),
-            ("empty_user_token", "User Atlassian token found in state but is empty"),
-            ("validation_failure", "Invalid user Confluence token or configuration"),
-            (
-                "missing_lifespan_context",
-                "Confluence global configuration.*is not available from lifespan context",
-            ),
-        ],
-    )
-    @patch("mcp_atlassian.servers.dependencies.get_http_request")
-    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
-    async def test_error_scenarios(
+    async def test_get_bitbucket_fetcher_uses_global_config(
         self,
-        mock_confluence_fetcher_class,
-        mock_get_http_request,
         mock_context,
-        mock_request,
         config_factory,
-        auth_scenarios,
-        error_scenario,
-        expected_error_match,
     ):
-        """Test various error scenarios."""
-        if error_scenario == "missing_global_config":
-            mock_get_http_request.side_effect = RuntimeError("No HTTP context")
-            mock_context.request_context.lifespan_context = {}
+        """Test that the global config is used when no user token is in contextvar."""
+        bb_config = config_factory.create_bitbucket_config()
+        app_context = config_factory.create_app_context(bitbucket_config=bb_config)
+        _setup_mock_context(mock_context, app_context)
 
-        elif error_scenario == "empty_user_token":
-            scenario = auth_scenarios["oauth"].copy()
-            scenario["token"] = ""  # Empty token
-            _setup_mock_request_state(mock_request, scenario)
-            mock_get_http_request.return_value = mock_request
-            app_context = config_factory.create_app_context()
-            _setup_mock_context(mock_context, app_context)
+        mock_fetcher = MagicMock(spec=BitbucketFetcher)
 
-        elif error_scenario == "validation_failure":
-            scenario = auth_scenarios["pat"]
-            _setup_mock_request_state(mock_request, scenario)
-            mock_get_http_request.return_value = mock_request
-            app_context = config_factory.create_app_context()
-            _setup_mock_context(mock_context, app_context)
+        # No user_auth_context set — should fall back to global config
+        with patch(
+            "mcp_atlassian.bitbucket.BitbucketFetcher",
+            return_value=mock_fetcher,
+        ) as mock_bb_class:
+            result = await get_bitbucket_fetcher(mock_context)
 
-            # Setup mock fetcher to fail validation
-            mock_fetcher = _create_mock_fetcher(
-                ConfluenceFetcher, validation_error=Exception("Invalid token")
-            )
-            mock_confluence_fetcher_class.return_value = mock_fetcher
+        assert result == mock_fetcher
+        mock_bb_class.assert_called_once()
+        called_config = mock_bb_class.call_args[1]["config"]
+        assert called_config is bb_config
 
-        elif error_scenario == "missing_lifespan_context":
-            scenario = auth_scenarios["oauth"]
-            _setup_mock_request_state(mock_request, scenario)
-            mock_get_http_request.return_value = mock_request
-            mock_context.request_context.lifespan_context = {}
+    async def test_get_bitbucket_fetcher_no_config_raises(
+        self,
+        mock_context,
+        config_factory,
+    ):
+        """Test ValueError raised when no Bitbucket config in lifespan context."""
+        # App context with no bitbucket config (full_bitbucket_config=None)
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
 
-        with pytest.raises(ValueError, match=expected_error_match):
-            await get_confluence_fetcher(mock_context)
+        with pytest.raises(
+            ValueError,
+            match="Bitbucket global configuration.*is not available from lifespan context",
+        ):
+            await get_bitbucket_fetcher(mock_context)
+
+    async def test_get_bitbucket_fetcher_ignores_oauth_token(
+        self,
+        mock_context,
+        config_factory,
+    ):
+        """Test that an OAuth token in contextvar is ignored (Bitbucket is PAT-only)."""
+        bb_config = config_factory.create_bitbucket_config()
+        app_context = config_factory.create_app_context(bitbucket_config=bb_config)
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = MagicMock(spec=BitbucketFetcher)
+
+        # Set an OAuth token — should be ignored, global config used instead
+        token = user_auth_context.set(
+            UserAuthContext(auth_type="oauth", token="some-oauth-token")
+        )
+        try:
+            with patch(
+                "mcp_atlassian.bitbucket.BitbucketFetcher",
+                return_value=mock_fetcher,
+            ) as mock_bb_class:
+                result = await get_bitbucket_fetcher(mock_context)
+        finally:
+            user_auth_context.reset(token)
+
+        assert result == mock_fetcher
+        called_config = mock_bb_class.call_args[1]["config"]
+        # Should use global config unchanged (no oauth support)
+        assert called_config is bb_config

@@ -17,6 +17,7 @@ from mcp_atlassian.servers.context import MainAppContext, user_auth_context
 from mcp_atlassian.utils.oauth import OAuthConfig
 
 if TYPE_CHECKING:
+    from mcp_atlassian.bitbucket import BitbucketFetcher
     from mcp_atlassian.confluence.config import (
         ConfluenceConfig as UserConfluenceConfigType,
     )
@@ -338,3 +339,64 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
     raise ValueError(
         "Confluence client (fetcher) not available. Ensure server is configured correctly."
     )
+
+
+async def get_bitbucket_fetcher(ctx: Context) -> BitbucketFetcher:
+    """Returns a BitbucketFetcher for the current request context.
+
+    Uses Bearer token (PAT) from request header if present; falls back to global PAT.
+
+    Args:
+        ctx: The FastMCP context.
+
+    Returns:
+        BitbucketFetcher instance for the current user or global config.
+
+    Raises:
+        ValueError: If Bitbucket configuration is not available.
+    """
+    from mcp_atlassian.bitbucket import BitbucketConfig, BitbucketFetcher
+
+    logger.debug(f"get_bitbucket_fetcher: ENTERED. Context ID: {id(ctx)}")
+
+    lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
+    app_lifespan_ctx: MainAppContext | None = (
+        lifespan_ctx_dict.get("app_lifespan_context")
+        if isinstance(lifespan_ctx_dict, dict)
+        else None
+    )
+    if not app_lifespan_ctx or not app_lifespan_ctx.full_bitbucket_config:
+        raise ValueError(
+            "Bitbucket global configuration (URL, SSL) is not available from lifespan context."
+        )
+
+    base_config = app_lifespan_ctx.full_bitbucket_config
+
+    # Check contextvar for user-provided Bearer token (PAT)
+    user_auth_ctx = user_auth_context.get()
+    if user_auth_ctx and user_auth_ctx.token and user_auth_ctx.auth_type == "pat":
+        logger.info(
+            f"Creating user-specific BitbucketFetcher with token ...{str(user_auth_ctx.token)[-8:]}"
+        )
+        user_config = dataclasses.replace(base_config, personal_token=user_auth_ctx.token)
+        try:
+            user_fetcher = BitbucketFetcher(config=user_config)
+            # Validate token by making a lightweight API call
+            user_fetcher.get_projects(limit=1)
+            logger.debug("get_bitbucket_fetcher: Validated user Bitbucket PAT successfully.")
+            return user_fetcher
+        except Exception as e:
+            logger.error(
+                f"get_bitbucket_fetcher: Failed to validate user-specific BitbucketFetcher: {e}",
+                exc_info=True,
+            )
+            raise ValueError(f"Invalid user Bitbucket token or configuration: {e}")
+
+    # Fallback to global PAT
+    if not base_config.personal_token:
+        raise ValueError(
+            "Bitbucket global PAT is not configured and no per-request token was provided. "
+            "Set BITBUCKET_PERSONAL_TOKEN or provide a Bearer token in the Authorization header."
+        )
+    logger.debug("get_bitbucket_fetcher: Using global BitbucketFetcher from lifespan_context.")
+    return BitbucketFetcher(config=base_config)

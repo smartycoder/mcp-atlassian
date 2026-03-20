@@ -5,11 +5,11 @@ services:
     build: .
     container_name: mcp-atlassian
     ports:
-      - "9000:9000"
+      - "9998:9000"
     environment:
-      JIRA_URL: "${JIRA_URL}"
-      JIRA_SSL_VERIFY: "${JIRA_SSL_VERIFY:-true}"
-      JIRA_PERSONAL_TOKEN: "${JIRA_PERSONAL_TOKEN}"
+      BITBUCKET_URL: "${BITBUCKET_URL}"
+      BITBUCKET_SSL_VERIFY: "${BITBUCKET_SSL_VERIFY:-true}"
+      BITBUCKET_PERSONAL_TOKEN: "${BITBUCKET_PERSONAL_TOKEN}"
       MCP_LOGGING_STDOUT: "true"
       MCP_VERBOSE: "true"
     command: ["--transport", "streamable-http", "--port", "9000", "-vv"]

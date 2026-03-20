@@ -118,6 +118,19 @@ def get_available_services() -> dict[str, bool | None]:
             "Using Jira minimal OAuth configuration - expecting user-provided tokens via headers"
         )
 
+    bitbucket_url = os.getenv("BITBUCKET_URL")
+    bitbucket_is_setup = False
+    if bitbucket_url:
+        if os.getenv("BITBUCKET_PERSONAL_TOKEN"):
+            bitbucket_is_setup = True
+            logger.info("Using Bitbucket Server/Data Center authentication (PAT)")
+        else:
+            # URL-only mode: tools are available but require per-request Bearer token
+            bitbucket_is_setup = True
+            logger.info(
+                "Bitbucket URL configured without PAT - expecting per-request tokens via headers"
+            )
+
     if not confluence_is_setup:
         logger.info(
             "Confluence is not configured or required environment variables are missing."
@@ -126,5 +139,9 @@ def get_available_services() -> dict[str, bool | None]:
         logger.info(
             "Jira is not configured or required environment variables are missing."
         )
+    if not bitbucket_is_setup:
+        logger.info(
+            "Bitbucket is not configured or required environment variables are missing."
+        )
 
-    return {"confluence": confluence_is_setup, "jira": jira_is_setup}
+    return {"confluence": confluence_is_setup, "jira": jira_is_setup, "bitbucket": bitbucket_is_setup}
