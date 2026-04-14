@@ -121,6 +121,11 @@ logger = setup_logging(logging_level, logging_stream)
     help="Verify SSL certificates for Bitbucket Server/Data Center (default: verify)",
 )
 @click.option(
+    "--tempo-enabled",
+    is_flag=True,
+    help="Enable Tempo Timesheets and Planner tools (requires Jira configuration)",
+)
+@click.option(
     "--read-only",
     is_flag=True,
     help="Run in read-only mode (disables all write operations)",
@@ -177,6 +182,7 @@ def main(
     bitbucket_url: str | None,
     bitbucket_personal_token: str | None,
     bitbucket_ssl_verify: bool,
+    tempo_enabled: bool,
     read_only: bool,
     enabled_tools: str | None,
     oauth_client_id: str | None,
@@ -328,6 +334,8 @@ def main(
         os.environ["BITBUCKET_PERSONAL_TOKEN"] = bitbucket_personal_token
     if click_ctx and was_option_provided(click_ctx, "bitbucket_ssl_verify"):
         os.environ["BITBUCKET_SSL_VERIFY"] = str(bitbucket_ssl_verify).lower()
+    if click_ctx and was_option_provided(click_ctx, "tempo_enabled"):
+        os.environ["TEMPO_ENABLED"] = str(tempo_enabled).lower()
 
     from mcp_atlassian.servers import main_mcp
 

@@ -1090,7 +1090,9 @@ async def add_worklog(
         str | None, Field(description="(Optional) New value for the remaining estimate")
     ] = None,
 ) -> str:
-    """Add a worklog entry to a Jira issue.
+    """Add a worklog entry to a Jira issue (native Jira worklog, without Tempo attributes).
+
+    Note: If your Jira instance uses Tempo Timesheets, prefer tempo_create_worklog instead — it supports required Tempo work attributes (e.g. Type, Work Location) and is visible in Tempo reports.
 
     Args:
         ctx: The FastMCP context.
@@ -1738,3 +1740,219 @@ async def batch_create_versions(
             )
             results.append({"success": False, "error": str(e), "input": v})
     return json.dumps(results, indent=2, ensure_ascii=False)
+
+
+# --- Groups Tools ---
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def jira_search_groups(
+    ctx: Context,
+    query: Annotated[str, Field(description="Search query string to filter groups by name.")],
+    max_results: Annotated[
+        int,
+        Field(description="(Optional) Maximum number of groups to return.", default=50),
+    ] = 50,
+) -> str:
+    """Search for Jira groups by name.
+
+    Args:
+        ctx: The FastMCP context.
+        query: Search query string to filter groups by name.
+        max_results: Maximum number of groups to return (default 50).
+
+    Returns:
+        JSON string with a list of matching groups, or an error object.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        groups = jira.search_groups(query=query, max_results=max_results)
+        return json.dumps(
+            {
+                "success": True,
+                "groups": [g.to_simplified_dict() for g in groups],
+                "total": len(groups),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"jira_search_groups failed for query '{query}': {e}")
+        return json.dumps({"success": False, "error": str(e)}, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def jira_get_group_members(
+    ctx: Context,
+    group_name: Annotated[str, Field(description="The name of the Jira group whose members to retrieve.")],
+    include_inactive: Annotated[
+        bool,
+        Field(description="(Optional) Whether to include inactive users.", default=False),
+    ] = False,
+    start_at: Annotated[
+        int,
+        Field(description="(Optional) Index of the first result for pagination.", default=0),
+    ] = 0,
+    max_results: Annotated[
+        int,
+        Field(description="(Optional) Maximum number of members to return.", default=50),
+    ] = 50,
+) -> str:
+    """Get members of a Jira group with pagination support.
+
+    Args:
+        ctx: The FastMCP context.
+        group_name: The name of the group.
+        include_inactive: Whether to include inactive users (default False).
+        start_at: Index of the first result for pagination (default 0).
+        max_results: Maximum number of members to return (default 50).
+
+    Returns:
+        JSON string with paginated group members, or an error object.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        result = jira.get_group_members(
+            group_name=group_name,
+            include_inactive=include_inactive,
+            start_at=start_at,
+            max_results=max_results,
+        )
+        return json.dumps(
+            {"success": True, **result.to_simplified_dict()},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"jira_get_group_members failed for group '{group_name}': {e}")
+        return json.dumps({"success": False, "error": str(e)}, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
+async def jira_create_group(
+    ctx: Context,
+    name: Annotated[str, Field(description="The name of the group to create.")],
+) -> str:
+    """Create a new Jira group.
+
+    Args:
+        ctx: The FastMCP context.
+        name: The name of the group to create.
+
+    Returns:
+        JSON string with the created group data, or an error object.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        group = jira.create_group(name=name)
+        return json.dumps({"success": True, "group": group}, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"jira_create_group failed for name '{name}': {e}")
+        return json.dumps({"success": False, "error": str(e)}, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
+async def jira_delete_group(
+    ctx: Context,
+    group_name: Annotated[str, Field(description="The name of the group to delete.")],
+    swap_group: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Name of a group to transfer the deleted group's restrictions to.",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Delete a Jira group.
+
+    Args:
+        ctx: The FastMCP context.
+        group_name: The name of the group to delete.
+        swap_group: Optional group name to transfer restrictions to.
+
+    Returns:
+        JSON string confirming deletion, or an error object.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        jira.delete_group(group_name=group_name, swap_group=swap_group)
+        return json.dumps(
+            {"success": True, "message": f"Group '{group_name}' deleted successfully."},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"jira_delete_group failed for group '{group_name}': {e}")
+        return json.dumps({"success": False, "error": str(e)}, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
+async def jira_add_user_to_group(
+    ctx: Context,
+    group_name: Annotated[str, Field(description="The name of the Jira group.")],
+    username: Annotated[str, Field(description="The username (key) of the user to add to the group.")],
+) -> str:
+    """Add a user to a Jira group.
+
+    Args:
+        ctx: The FastMCP context.
+        group_name: The name of the group.
+        username: The username (key) of the user to add.
+
+    Returns:
+        JSON string confirming the user was added, or an error object.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        jira.add_user_to_group(group_name=group_name, username=username)
+        return json.dumps(
+            {
+                "success": True,
+                "message": f"User '{username}' added to group '{group_name}' successfully.",
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(
+            f"jira_add_user_to_group failed for user '{username}' and group '{group_name}': {e}"
+        )
+        return json.dumps({"success": False, "error": str(e)}, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
+async def jira_remove_user_from_group(
+    ctx: Context,
+    group_name: Annotated[str, Field(description="The name of the Jira group.")],
+    username: Annotated[str, Field(description="The username (key) of the user to remove from the group.")],
+) -> str:
+    """Remove a user from a Jira group.
+
+    Args:
+        ctx: The FastMCP context.
+        group_name: The name of the group.
+        username: The username (key) of the user to remove.
+
+    Returns:
+        JSON string confirming the user was removed, or an error object.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        jira.remove_user_from_group(group_name=group_name, username=username)
+        return json.dumps(
+            {
+                "success": True,
+                "message": f"User '{username}' removed from group '{group_name}' successfully.",
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(
+            f"jira_remove_user_from_group failed for user '{username}' and group '{group_name}': {e}"
+        )
+        return json.dumps({"success": False, "error": str(e)}, indent=2, ensure_ascii=False)
