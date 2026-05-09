@@ -117,12 +117,19 @@ class JiraPreprocessor(BasePreprocessor):
         # Block quotes
         output = re.sub(r"^bq\.(.*?)$", r"> \1\n", input_text, flags=re.MULTILINE)
 
-        # Text formatting (bold, italic)
+        # Text formatting (bold, italic).
+        # Require word/delimiter boundaries on both ends so identifiers like
+        # ``BUILD_ID`` and stray sequences like ``x ** bold ** y`` are left
+        # alone. Bold first to avoid the inner ``*`` of ``**run**`` being
+        # picked up by the italic pass.
         output = re.sub(
-            r"([*_])(.*?)\1",
-            lambda match: ("**" if match.group(1) == "*" else "*")
-            + match.group(2)
-            + ("**" if match.group(1) == "*" else "*"),
+            r"(?<![\w*])\*(?=\S)([^*]+?(?<=\S))\*(?!\w|\*)",
+            r"**\1**",
+            output,
+        )
+        output = re.sub(
+            r"(?<![\w_])_(?=\S)([^_]+?(?<=\S))_(?!\w|_)",
+            r"*\1*",
             output,
         )
 
@@ -148,8 +155,13 @@ class JiraPreprocessor(BasePreprocessor):
         # Citation
         output = re.sub(r"\?\?((?:.[^?]|[^?].)+)\?\?", r"<cite>\1</cite>", output)
 
-        # Inserted text
-        output = re.sub(r"\+([^+]*)\+", r"<ins>\1</ins>", output)
+        # Inserted text (Jira ``+text+``). Boundary-anchored so ``C++`` and
+        # other ``+`` runs in code are not eaten.
+        output = re.sub(
+            r"(?<![\w+])\+(?=\S)([^+]+?(?<=\S))\+(?!\w|\+)",
+            r"<ins>\1</ins>",
+            output,
+        )
 
         # Superscript
         output = re.sub(r"\^([^^]*)\^", r"<sup>\1</sup>", output)

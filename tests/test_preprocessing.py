@@ -290,6 +290,30 @@ For more information, see [our website](https://example.com).
     assert "[our website|https://example.com]" in converted
 
 
+def test_jira_to_markdown_preserves_identifiers(preprocessor_with_jira):
+    """Reverse direction must not eat underscores/asterisks/pluses inside
+    identifiers when reading comments back out of Jira.
+
+    Regression: ``BUILD_ID and PARTNER_ID`` was being rendered as
+    ``BUILD*ID and PARTNER*ID`` because ``([*_])(.*?)\\1`` matched across
+    the two underscores.
+    """
+    convert = preprocessor_with_jira.jira_to_markdown
+
+    assert convert("jira_update_comment") == "jira_update_comment"
+    assert (
+        convert("BUILD_ID=42 in PARTNER_ID=7") == "BUILD_ID=42 in PARTNER_ID=7"
+    )
+    assert convert("cd api && pytest") == "cd api && pytest"
+    assert convert("C++ code") == "C++ code"
+    assert convert("foo*bar*baz") == "foo*bar*baz"
+
+    # Real emphasis still converts.
+    assert convert("*bold text*") == "**bold text**"
+    assert convert("_italic text_") == "*italic text*"
+    assert convert("+underlined+") == "<ins>underlined</ins>"
+
+
 def test_markdown_to_jira_preserves_underscores_in_identifiers(
     preprocessor_with_jira,
 ):
