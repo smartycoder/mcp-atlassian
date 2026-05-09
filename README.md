@@ -6,7 +6,7 @@
 [![Run Tests](https://github.com/smartycoder/mcp-atlassian/actions/workflows/tests.yml/badge.svg)](https://github.com/smartycoder/mcp-atlassian/actions/workflows/tests.yml)
 ![License](https://img.shields.io/github/license/smartycoder/mcp-atlassian)
 
-Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira). This integration supports both Confluence & Jira Cloud and Server/Data Center deployments.
+Model Context Protocol (MCP) server for Atlassian products (Confluence, Jira, and Bitbucket), with Tempo Timesheets/Planner support. This integration supports both Cloud and Server/Data Center deployments.
 
 ## Example Usage
 
@@ -758,7 +758,7 @@ Here's a complete example of setting up multi-user authentication with streamabl
 - `jira_create_issue`: Create a new issue
 - `jira_update_issue`: Update an existing issue
 - `jira_transition_issue`: Transition an issue to a new status
-- `jira_add_comment`: Add a comment to an issue
+- `jira_add_comment` / `jira_update_comment` / `jira_delete_comment`: Manage comments on an issue. Pass `markdown=False` on add/update to send the body verbatim (use this when your input is already Jira wiki markup, or for content where the Markdown→wiki conversion is unwanted).
 
 #### Confluence Tools
 
@@ -774,39 +774,64 @@ Here's a complete example of setting up multi-user authentication with streamabl
 | **Read**  | `jira_search`                       | `confluence_search`            |
 |           | `jira_get_issue`                    | `confluence_get_page`          |
 |           | `jira_get_all_projects`             | `confluence_get_page_children` |
-|           | `jira_get_project_issues`           | `confluence_get_comments`      |
-|           | `jira_get_worklog`                  | `confluence_get_labels`        |
-|           | `jira_get_transitions`              | `confluence_search_user`       |
+|           | `jira_get_recent_projects`          | `confluence_get_comments`      |
+|           | `jira_get_project_issues`           | `confluence_get_labels`        |
+|           | `jira_get_recently_viewed`          | `confluence_search_user`       |
+|           | `jira_get_worklog`                  |                                |
+|           | `jira_get_transitions`              |                                |
 |           | `jira_search_fields`                |                                |
 |           | `jira_get_agile_boards`             |                                |
 |           | `jira_get_board_issues`             |                                |
 |           | `jira_get_sprints_from_board`       |                                |
 |           | `jira_get_sprint_issues`            |                                |
-|           | `jira_get_issue_link_types`         |                                |
+|           | `jira_get_link_types`               |                                |
 |           | `jira_batch_get_changelogs`*        |                                |
 |           | `jira_get_user_profile`             |                                |
 |           | `jira_download_attachments`         |                                |
 |           | `jira_get_project_versions`         |                                |
+|           | `jira_jira_search_groups`           |                                |
+|           | `jira_jira_get_group_members`       |                                |
 | **Write** | `jira_create_issue`                 | `confluence_create_page`       |
 |           | `jira_update_issue`                 | `confluence_update_page`       |
 |           | `jira_delete_issue`                 | `confluence_delete_page`       |
 |           | `jira_batch_create_issues`          | `confluence_add_label`         |
 |           | `jira_add_comment`                  | `confluence_add_comment`       |
+|           | `jira_update_comment`               |                                |
+|           | `jira_delete_comment`               |                                |
 |           | `jira_transition_issue`             |                                |
 |           | `jira_add_worklog`                  |                                |
 |           | `jira_link_to_epic`                 |                                |
 |           | `jira_create_sprint`                |                                |
 |           | `jira_update_sprint`                |                                |
 |           | `jira_create_issue_link`            |                                |
+|           | `jira_create_remote_issue_link`     |                                |
 |           | `jira_remove_issue_link`            |                                |
 |           | `jira_create_version`               |                                |
 |           | `jira_batch_create_versions`        |                                |
+|           | `jira_jira_create_group`            |                                |
+|           | `jira_jira_delete_group`            |                                |
+|           | `jira_jira_add_user_to_group`       |                                |
+|           | `jira_jira_remove_user_from_group`  |                                |
 
 </details>
 
 *Tool only available on Jira Cloud
 
 </details>
+
+#### Bitbucket Tools (Server/Data Center)
+
+Full PR lifecycle (create, update, merge, decline, reopen, approve / unapprove, reviewers, comments, tasks), branch and tag management, repo browsing, file content/list, diff and changes, commit inspection, and code search — 35 tools. See [`src/mcp_atlassian/servers/bitbucket.py`](src/mcp_atlassian/servers/bitbucket.py).
+
+#### Tempo Tools
+
+All tools are exposed under the `tempo_tempo_*` prefix (server mounted as `tempo`).
+
+**Timesheets:** `tempo_tempo_search_worklogs`, `tempo_tempo_get_worklog`, `tempo_tempo_create_worklog`, `tempo_tempo_update_worklog`, `tempo_tempo_delete_worklog`, `tempo_tempo_get_approval_status`, `tempo_tempo_get_pending_approvals`, `tempo_tempo_submit_approval`, `tempo_tempo_get_work_attributes`, `tempo_tempo_get_user_schedule`.
+
+**Planner:** `tempo_tempo_get_teams`, `tempo_tempo_get_team`, `tempo_tempo_create_team`, `tempo_tempo_get_team_roles`, `tempo_tempo_get_team_members`, `tempo_tempo_add_team_member`, `tempo_tempo_update_team_member`, `tempo_tempo_remove_team_member`, `tempo_tempo_search_allocations`, `tempo_tempo_create_allocation`, `tempo_tempo_update_allocation`, `tempo_tempo_delete_allocation`.
+
+See [`src/mcp_atlassian/servers/tempo.py`](src/mcp_atlassian/servers/tempo.py).
 
 ### Tool Filtering and Access Control
 
