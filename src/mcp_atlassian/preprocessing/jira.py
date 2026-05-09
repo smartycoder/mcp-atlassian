@@ -303,14 +303,34 @@ class JiraPreprocessor(BasePreprocessor):
             flags=re.MULTILINE,
         )
 
-        # Bold and italic
+        # Bold and italic.
+        # Convert bold first into placeholders (\x01..\x02) so the italic
+        # pass cannot re-match the inner ``*`` of a ``**bold**`` run, then
+        # convert italic. Boundaries reject delimiter-adjacent content so
+        # identifiers like ``BUILD_ID and PARTNER_ID`` and stray sequences
+        # like ``x ** bold ** y`` are left untouched.
+        bold_open, bold_close = "\x01", "\x02"
         output = re.sub(
-            r"([*_]+)(.*?)\1",
-            lambda match: ("_" if len(match.group(1)) == 1 else "*")
-            + match.group(2)
-            + ("_" if len(match.group(1)) == 1 else "*"),
+            r"(?<![\w*])\*\*(?=\S)([^*]+?(?<=\S))\*\*(?!\w|\*)",
+            bold_open + r"\1" + bold_close,
             output,
         )
+        output = re.sub(
+            r"(?<![\w_])__(?=\S)([^_]+?(?<=\S))__(?!\w|_)",
+            bold_open + r"\1" + bold_close,
+            output,
+        )
+        output = re.sub(
+            r"(?<![\w*])\*(?=\S)([^*]+?(?<=\S))\*(?!\w|\*)",
+            r"_\1_",
+            output,
+        )
+        output = re.sub(
+            r"(?<![\w_])_(?=\S)([^_]+?(?<=\S))_(?!\w|_)",
+            r"_\1_",
+            output,
+        )
+        output = output.replace(bold_open, "*").replace(bold_close, "*")
 
         # Multi-level bulleted list
         output = re.sub(

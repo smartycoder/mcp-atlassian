@@ -281,6 +281,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         batch_get_changelogs,
         create_issue,
         create_issue_link,
+        delete_comment,
         delete_issue,
         download_attachments,
         get_agile_boards,
@@ -301,6 +302,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         search,
         search_fields,
         transition_issue,
+        update_comment,
         update_issue,
         update_sprint,
     )
@@ -328,6 +330,8 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.tool()(update_issue)
     jira_sub_mcp.tool()(delete_issue)
     jira_sub_mcp.tool()(add_comment)
+    jira_sub_mcp.tool()(update_comment)
+    jira_sub_mcp.tool()(delete_comment)
     jira_sub_mcp.tool()(add_worklog)
     jira_sub_mcp.tool()(link_to_epic)
     jira_sub_mcp.tool()(create_issue_link)

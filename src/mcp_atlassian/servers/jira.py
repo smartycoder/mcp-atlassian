@@ -1034,14 +1034,34 @@ async def delete_issue(
 async def add_comment(
     ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
-    comment: Annotated[str, Field(description="Comment text in Markdown format")],
+    comment: Annotated[
+        str,
+        Field(
+            description=(
+                "Comment text. Markdown by default — converted to Jira wiki "
+                "markup. Set markdown=false to send the body verbatim (use "
+                "this for raw Jira wiki markup or code-heavy content where "
+                "the converter mangles characters like '_', '+', '&&')."
+            )
+        ),
+    ],
+    markdown: Annotated[
+        bool,
+        Field(
+            description=(
+                "If true (default), convert Markdown to Jira wiki markup. "
+                "Set to false to send the comment body unchanged."
+            )
+        ),
+    ] = True,
 ) -> str:
     """Add a comment to a Jira issue.
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        comment: Comment text in Markdown.
+        comment: Comment body (Markdown by default).
+        markdown: Whether to run Markdown→Jira wiki conversion.
 
     Returns:
         JSON string representing the added comment object.
@@ -1050,8 +1070,80 @@ async def add_comment(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    # add_comment returns dict
-    result = jira.add_comment(issue_key, comment)
+    result = jira.add_comment(issue_key, comment, markdown=markdown)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
+async def update_comment(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    comment_id: Annotated[str, Field(description="ID of the comment to update")],
+    comment: Annotated[
+        str,
+        Field(
+            description=(
+                "New comment text. Markdown by default — converted to Jira "
+                "wiki markup. Set markdown=false to send verbatim."
+            )
+        ),
+    ],
+    markdown: Annotated[
+        bool,
+        Field(
+            description=(
+                "If true (default), convert Markdown to Jira wiki markup. "
+                "Set to false to send the body unchanged."
+            )
+        ),
+    ] = True,
+) -> str:
+    """Update an existing comment on a Jira issue.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        comment_id: ID of the comment to update.
+        comment: New comment body (Markdown by default).
+        markdown: Whether to run Markdown→Jira wiki conversion.
+
+    Returns:
+        JSON string representing the updated comment object.
+
+    Raises:
+        ValueError: If in read-only mode or Jira client unavailable.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.update_comment(issue_key, comment_id, comment, markdown=markdown)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
+async def delete_comment(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    comment_id: Annotated[str, Field(description="ID of the comment to delete")],
+) -> str:
+    """Delete a comment from a Jira issue.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        comment_id: ID of the comment to delete.
+
+    Returns:
+        JSON string indicating success.
+
+    Raises:
+        ValueError: If in read-only mode or Jira client unavailable.
+    """
+    jira = await get_jira_fetcher(ctx)
+    jira.delete_comment(issue_key, comment_id)
+    result = {
+        "message": f"Comment {comment_id} deleted from issue {issue_key}.",
+    }
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 

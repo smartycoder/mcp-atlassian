@@ -52,13 +52,20 @@ class CommentsMixin(JiraClient):
             logger.error(f"Error getting comments for issue {issue_key}: {str(e)}")
             raise Exception(f"Error getting comments: {str(e)}") from e
 
-    def add_comment(self, issue_key: str, comment: str) -> dict[str, Any]:
+    def add_comment(
+        self, issue_key: str, comment: str, markdown: bool = True
+    ) -> dict[str, Any]:
         """
         Add a comment to an issue.
 
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
-            comment: Comment text to add (in Markdown format)
+            comment: Comment text to add (Markdown by default; raw Jira wiki
+                markup if ``markdown=False``)
+            markdown: If True (default), convert Markdown to Jira wiki markup.
+                Set to False to send the comment body verbatim — useful when
+                the input is already Jira wiki markup or contains code-like
+                content that the converter mangles.
 
         Returns:
             The created comment details
@@ -67,10 +74,9 @@ class CommentsMixin(JiraClient):
             Exception: If there is an error adding the comment
         """
         try:
-            # Convert Markdown to Jira's markup format
-            jira_formatted_comment = self._markdown_to_jira(comment)
+            body = self._markdown_to_jira(comment) if markdown else comment
 
-            result = self.jira.issue_add_comment(issue_key, jira_formatted_comment)
+            result = self.jira.issue_add_comment(issue_key, body)
             if not isinstance(result, dict):
                 msg = f"Unexpected return value type from `jira.issue_add_comment`: {type(result)}"
                 logger.error(msg)
@@ -85,6 +91,77 @@ class CommentsMixin(JiraClient):
         except Exception as e:
             logger.error(f"Error adding comment to issue {issue_key}: {str(e)}")
             raise Exception(f"Error adding comment: {str(e)}") from e
+
+    def update_comment(
+        self,
+        issue_key: str,
+        comment_id: str,
+        comment: str,
+        markdown: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Update an existing comment on an issue.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            comment_id: The comment ID to update
+            comment: New comment text (Markdown by default; raw Jira wiki
+                markup if ``markdown=False``)
+            markdown: If True (default), convert Markdown to Jira wiki markup.
+                Set to False to send the body verbatim.
+
+        Returns:
+            The updated comment details
+
+        Raises:
+            Exception: If there is an error updating the comment
+        """
+        try:
+            body = self._markdown_to_jira(comment) if markdown else comment
+
+            result = self.jira.issue_edit_comment(issue_key, comment_id, body)
+            if not isinstance(result, dict):
+                msg = f"Unexpected return value type from `jira.issue_edit_comment`: {type(result)}"
+                logger.error(msg)
+                raise TypeError(msg)
+
+            return {
+                "id": result.get("id"),
+                "body": self._clean_text(result.get("body", "")),
+                "created": str(parse_date(result.get("created"))),
+                "updated": str(parse_date(result.get("updated"))),
+                "author": result.get("author", {}).get("displayName", "Unknown"),
+            }
+        except Exception as e:
+            logger.error(
+                f"Error updating comment {comment_id} on issue {issue_key}: {str(e)}"
+            )
+            raise Exception(f"Error updating comment: {str(e)}") from e
+
+    def delete_comment(self, issue_key: str, comment_id: str) -> bool:
+        """
+        Delete a comment from an issue.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            comment_id: The comment ID to delete
+
+        Returns:
+            True on success.
+
+        Raises:
+            Exception: If there is an error deleting the comment
+        """
+        try:
+            base_url = self.jira.resource_url("issue")
+            url = f"{base_url}/{issue_key}/comment/{comment_id}"
+            self.jira.delete(url)
+            return True
+        except Exception as e:
+            logger.error(
+                f"Error deleting comment {comment_id} on issue {issue_key}: {str(e)}"
+            )
+            raise Exception(f"Error deleting comment: {str(e)}") from e
 
     def _markdown_to_jira(self, markdown_text: str) -> str:
         """

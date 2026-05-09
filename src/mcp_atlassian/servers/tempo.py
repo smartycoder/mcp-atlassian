@@ -126,13 +126,45 @@ async def tempo_create_worklog(
         str | None,
         Field(description="(Optional) Remaining estimate string (e.g. '1h', '30m').", default=None),
     ] = None,
+    attributes: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON array of Tempo work attributes. "
+                "Required on instances that enforce them (e.g. Type, Work Location). "
+                "Format: '[{\"key\": \"_Type_\", \"value\": \"Development\"}, "
+                "{\"key\": \"_WorkLocation_\", \"value\": \"HomeOffice\"}]'. "
+                "Use tempo_get_work_attributes to list available keys and allowed values."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Create a new Tempo worklog entry for a Jira issue.
+
+    IMPORTANT — before calling this tool:
+    1. Call `tempo_get_work_attributes` to fetch the required/available work
+       attributes and their allowed values for this Tempo instance.
+    2. Present the allowed values to the user (e.g. "Type: Development |
+       Testing | Meeting | …", "Work Location: HomeOffice | Office | …") and
+       ask them to pick one for each required attribute.
+    3. Pass the user's choices via the `attributes` parameter as a JSON array:
+       `[{"key": "_Type_", "value": "Development"},
+         {"key": "_WorkLocation_", "value": "HomeOffice"}]`
+
+    Skip the prompt only if the user has already provided those values in the
+    current conversation. Worklogs created without required attributes may be
+    rejected by the server or hidden from Tempo reports.
 
     Returns a JSON object with the created worklog details.
     """
     tempo = await get_tempo_fetcher(ctx)
     try:
+        parsed_attributes: list[dict[str, Any]] | None = None
+        if attributes:
+            parsed_attributes = json.loads(attributes)
+            if not isinstance(parsed_attributes, list):
+                raise ValueError("attributes must be a JSON array of objects")
         worklog = tempo.create_worklog(
             worker=worker,
             issue_key=issue_key,
@@ -142,6 +174,7 @@ async def tempo_create_worklog(
             billable_seconds=billable_seconds,
             end_date=end_date,
             include_non_working_days=include_non_working_days,
+            attributes=parsed_attributes,
             remaining_estimate=remaining_estimate,
         )
         return json.dumps(
@@ -187,13 +220,41 @@ async def tempo_update_worklog(
         str | None,
         Field(description="(Optional) New remaining estimate string (e.g. '1h').", default=None),
     ] = None,
+    attributes: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON array of Tempo work attributes to replace existing ones. "
+                "Format: '[{\"key\": \"_Type_\", \"value\": \"Development\"}, "
+                "{\"key\": \"_WorkLocation_\", \"value\": \"HomeOffice\"}]'. "
+                "Use tempo_get_work_attributes to list available keys and allowed values."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Update an existing Tempo worklog entry. Only provided fields are updated.
+
+    IMPORTANT — if the user wants to change work attributes (Type, Work
+    Location, or other Tempo custom attributes):
+    1. Call `tempo_get_work_attributes` to fetch allowed values.
+    2. Present them to the user and ask which ones to set.
+    3. Pass the full replacement set via the `attributes` parameter as a JSON
+       array, e.g. `[{"key": "_Type_", "value": "Development"},
+       {"key": "_WorkLocation_", "value": "HomeOffice"}]`.
+
+    Note: `attributes` replaces the existing attribute set — include every
+    attribute you want to keep, not only the ones that change.
 
     Returns a JSON object with the updated worklog details.
     """
     tempo = await get_tempo_fetcher(ctx)
     try:
+        parsed_attributes: list[dict[str, Any]] | None = None
+        if attributes:
+            parsed_attributes = json.loads(attributes)
+            if not isinstance(parsed_attributes, list):
+                raise ValueError("attributes must be a JSON array of objects")
         worklog = tempo.update_worklog(
             worklog_id=worklog_id,
             started=started,
@@ -202,6 +263,7 @@ async def tempo_update_worklog(
             billable_seconds=billable_seconds,
             end_date=end_date,
             include_non_working_days=include_non_working_days,
+            attributes=parsed_attributes,
             remaining_estimate=remaining_estimate,
         )
         return json.dumps(

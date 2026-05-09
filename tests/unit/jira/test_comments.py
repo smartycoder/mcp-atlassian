@@ -242,6 +242,88 @@ class TestCommentsMixin:
         with pytest.raises(Exception, match="Error adding comment"):
             comments_mixin.add_comment("TEST-123", "Test comment")
 
+    def test_add_comment_skips_conversion_when_markdown_false(self, comments_mixin):
+        """Comment body is sent verbatim when markdown=False."""
+        comments_mixin.jira.issue_add_comment.return_value = {
+            "id": "10001",
+            "body": "raw {code}cd api && pytest{code}",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+
+        raw = "raw {code}cd api && pytest{code}"
+        comments_mixin.add_comment("TEST-123", raw, markdown=False)
+
+        comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
+        comments_mixin.jira.issue_add_comment.assert_called_once_with("TEST-123", raw)
+
+    def test_update_comment_basic(self, comments_mixin):
+        """update_comment converts markdown and forwards to issue_edit_comment."""
+        comments_mixin.jira.issue_edit_comment.return_value = {
+            "id": "10001",
+            "body": "*This* is _Jira_ formatted",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "updated": "2024-01-02T10:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+
+        result = comments_mixin.update_comment("TEST-123", "10001", "Updated body")
+
+        comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
+            "Updated body"
+        )
+        comments_mixin.jira.issue_edit_comment.assert_called_once_with(
+            "TEST-123", "10001", "*This* is _Jira_ formatted"
+        )
+        assert result["id"] == "10001"
+        assert result["updated"] == "2024-01-02 10:00:00+00:00"
+
+    def test_update_comment_skips_conversion_when_markdown_false(
+        self, comments_mixin
+    ):
+        comments_mixin.jira.issue_edit_comment.return_value = {
+            "id": "10001",
+            "body": "raw",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "updated": "2024-01-02T10:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+
+        comments_mixin.update_comment(
+            "TEST-123", "10001", "raw body", markdown=False
+        )
+
+        comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
+        comments_mixin.jira.issue_edit_comment.assert_called_once_with(
+            "TEST-123", "10001", "raw body"
+        )
+
+    def test_update_comment_with_error(self, comments_mixin):
+        comments_mixin.jira.issue_edit_comment.side_effect = Exception("API Error")
+
+        with pytest.raises(Exception, match="Error updating comment"):
+            comments_mixin.update_comment("TEST-123", "10001", "x")
+
+    def test_delete_comment_basic(self, comments_mixin):
+        comments_mixin.jira.resource_url = Mock(
+            return_value="https://example.atlassian.net/rest/api/2/issue"
+        )
+        comments_mixin.jira.delete = Mock(return_value=None)
+
+        assert comments_mixin.delete_comment("TEST-123", "10001") is True
+
+        comments_mixin.jira.resource_url.assert_called_once_with("issue")
+        comments_mixin.jira.delete.assert_called_once_with(
+            "https://example.atlassian.net/rest/api/2/issue/TEST-123/comment/10001"
+        )
+
+    def test_delete_comment_with_error(self, comments_mixin):
+        comments_mixin.jira.resource_url = Mock(return_value="https://x/issue")
+        comments_mixin.jira.delete = Mock(side_effect=Exception("API Error"))
+
+        with pytest.raises(Exception, match="Error deleting comment"):
+            comments_mixin.delete_comment("TEST-123", "10001")
+
     def test_markdown_to_jira(self, comments_mixin):
         """Test markdown to Jira conversion."""
         # Setup - need to replace the mock entirely
