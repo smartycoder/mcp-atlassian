@@ -21,6 +21,7 @@ from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.tempo.config import TempoConfig
 from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
 from mcp_atlassian.utils.logging import mask_sensitive
@@ -30,6 +31,7 @@ from .bitbucket import bitbucket_mcp
 from .confluence import confluence_mcp
 from .context import MainAppContext, UserAuthContext, user_auth_context
 from .jira import jira_mcp
+from .tempo import tempo_mcp
 
 logger = logging.getLogger("mcp-atlassian.server.main")
 
@@ -48,6 +50,7 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
     loaded_jira_config: JiraConfig | None = None
     loaded_confluence_config: ConfluenceConfig | None = None
     loaded_bitbucket_config: BitbucketConfig | None = None
+    loaded_tempo_config: TempoConfig | None = None
 
     if services.get("jira"):
         try:
@@ -94,10 +97,26 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
         except Exception as e:
             logger.error(f"Failed to load Bitbucket configuration: {e}", exc_info=True)
 
+    if services.get("tempo"):
+        try:
+            tempo_config = TempoConfig.from_env()
+            if tempo_config.is_auth_configured():
+                loaded_tempo_config = tempo_config
+                logger.info(
+                    "Tempo configuration loaded and authentication is configured."
+                )
+            else:
+                logger.warning(
+                    "Tempo is enabled but Jira authentication is not configured. Tempo tools will be unavailable."
+                )
+        except Exception as e:
+            logger.error(f"Failed to load Tempo configuration: {e}", exc_info=True)
+
     app_context = MainAppContext(
         full_jira_config=loaded_jira_config,
         full_confluence_config=loaded_confluence_config,
         full_bitbucket_config=loaded_bitbucket_config,
+        full_tempo_config=loaded_tempo_config,
         read_only=read_only,
         enabled_tools=enabled_tools,
     )
@@ -120,6 +139,8 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
                 logger.debug("Cleaning up Confluence resources...")
             if loaded_bitbucket_config:
                 logger.debug("Cleaning up Bitbucket resources...")
+            if loaded_tempo_config:
+                logger.debug("Cleaning up Tempo resources...")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}", exc_info=True)
         logger.info("Main Atlassian MCP server lifespan shutdown complete.")
@@ -176,10 +197,11 @@ class AtlassianMCP(FastMCP[MainAppContext]):
                 )
                 continue
 
-            # Exclude Jira/Confluence/Bitbucket tools if config is not fully authenticated
+            # Exclude Jira/Confluence/Bitbucket/Tempo tools if config is not fully authenticated
             is_jira_tool = "jira" in tool_tags
             is_confluence_tool = "confluence" in tool_tags
             is_bitbucket_tool = "bitbucket" in tool_tags
+            is_tempo_tool = "tempo" in tool_tags
             service_configured_and_available = True
             if app_lifespan_state:
                 if is_jira_tool and not app_lifespan_state.full_jira_config:
@@ -197,7 +219,12 @@ class AtlassianMCP(FastMCP[MainAppContext]):
                         f"Excluding Bitbucket tool '{registered_name}' as Bitbucket configuration/authentication is incomplete."
                     )
                     service_configured_and_available = False
-            elif is_jira_tool or is_confluence_tool or is_bitbucket_tool:
+                if is_tempo_tool and not app_lifespan_state.full_tempo_config:
+                    logger.debug(
+                        f"Excluding Tempo tool '{registered_name}' as Tempo configuration is incomplete."
+                    )
+                    service_configured_and_available = False
+            elif is_jira_tool or is_confluence_tool or is_bitbucket_tool or is_tempo_tool:
                 logger.warning(
                     f"Excluding tool '{registered_name}' as application context is unavailable to verify service configuration."
                 )
@@ -378,6 +405,7 @@ main_mcp = AtlassianMCP(name="Atlassian MCP", lifespan=main_lifespan)
 main_mcp.mount("jira", jira_mcp)
 main_mcp.mount("confluence", confluence_mcp)
 main_mcp.mount("bitbucket", bitbucket_mcp)
+main_mcp.mount("tempo", tempo_mcp)
 
 
 @main_mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)

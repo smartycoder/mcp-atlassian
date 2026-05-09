@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from mcp_atlassian.bitbucket.config import BitbucketConfig
     from mcp_atlassian.confluence.config import ConfluenceConfig
     from mcp_atlassian.jira.config import JiraConfig
+    from mcp_atlassian.tempo.config import TempoConfig
 
 
 @dataclass
@@ -37,5 +38,6 @@ class MainAppContext:
     full_jira_config: JiraConfig | None = None
     full_confluence_config: ConfluenceConfig | None = None
     full_bitbucket_config: BitbucketConfig | None = None
+    full_tempo_config: TempoConfig | None = None
     read_only: bool = False
     enabled_tools: list[str] | None = None

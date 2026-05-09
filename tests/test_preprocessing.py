@@ -290,6 +290,70 @@ For more information, see [our website](https://example.com).
     assert "[our website|https://example.com]" in converted
 
 
+def test_jira_to_markdown_preserves_identifiers(preprocessor_with_jira):
+    """Reverse direction must not eat underscores/asterisks/pluses inside
+    identifiers when reading comments back out of Jira.
+
+    Regression: ``BUILD_ID and PARTNER_ID`` was being rendered as
+    ``BUILD*ID and PARTNER*ID`` because ``([*_])(.*?)\\1`` matched across
+    the two underscores.
+    """
+    convert = preprocessor_with_jira.jira_to_markdown
+
+    assert convert("jira_update_comment") == "jira_update_comment"
+    assert (
+        convert("BUILD_ID=42 in PARTNER_ID=7") == "BUILD_ID=42 in PARTNER_ID=7"
+    )
+    assert convert("cd api && pytest") == "cd api && pytest"
+    assert convert("C++ code") == "C++ code"
+    assert convert("foo*bar*baz") == "foo*bar*baz"
+
+    # Real emphasis still converts.
+    assert convert("*bold text*") == "**bold text**"
+    assert convert("_italic text_") == "*italic text*"
+    assert convert("+underlined+") == "<ins>underlined</ins>"
+
+
+def test_markdown_to_jira_preserves_underscores_in_identifiers(
+    preprocessor_with_jira,
+):
+    """Identifiers with internal underscores must not be turned into italic.
+
+    Regression: ``BUILD_ID and PARTNER_ID`` was being converted to
+    ``BUILD*ID and PARTNER*ID`` because the emphasis regex matched
+    ``_ID and PARTNER_`` across the two identifiers.
+    """
+    text = "Run with BUILD_ID=42 and PARTNER_ID=7 to reproduce."
+    converted = preprocessor_with_jira.markdown_to_jira(text)
+    assert "BUILD_ID=42" in converted
+    assert "PARTNER_ID=7" in converted
+
+    snake = "the snake_case_var name"
+    assert preprocessor_with_jira.markdown_to_jira(snake) == snake
+
+
+def test_markdown_to_jira_emphasis_edge_cases(preprocessor_with_jira):
+    """Edge cases around bold/italic delimiters that previously misfired."""
+    convert = preprocessor_with_jira.markdown_to_jira
+
+    # Spaced ``**`` runs are not emphasis — leave them alone.
+    assert convert("x ** bold ** y") == "x ** bold ** y"
+    assert convert("A ** B ** C") == "A ** B ** C"
+
+    # Word-internal single ``*`` is not emphasis.
+    assert convert("foo*bar*baz") == "foo*bar*baz"
+
+    # Punctuation on either side does not block real emphasis.
+    assert convert("(**bold**)") == "(*bold*)"
+    assert convert("[**bold**](url)") == "[*bold*|url]"
+
+    # Real emphasis still converts.
+    assert convert("**bold text**") == "*bold text*"
+    assert convert("__alt bold__") == "*alt bold*"
+    assert convert("*italic text*") == "_italic text_"
+    assert convert("_alt italic_") == "_alt italic_"
+
+
 def test_markdown_to_confluence_storage(preprocessor_with_confluence):
     """Test conversion of Markdown to Confluence storage format."""
     markdown = """# Heading 1

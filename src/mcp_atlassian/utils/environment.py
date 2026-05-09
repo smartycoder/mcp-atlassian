@@ -131,6 +131,16 @@ def get_available_services() -> dict[str, bool | None]:
                 "Bitbucket URL configured without PAT - expecting per-request tokens via headers"
             )
 
+    tempo_is_setup = False
+    tempo_enabled = os.getenv("TEMPO_ENABLED", "").lower() in ("true", "1", "yes")
+    if tempo_enabled and jira_is_setup:
+        tempo_is_setup = True
+        logger.info("Tempo enabled — will use Jira credentials for Tempo API access")
+    elif tempo_enabled and not jira_is_setup:
+        logger.warning(
+            "TEMPO_ENABLED is set but Jira is not configured. Tempo tools will be unavailable."
+        )
+
     if not confluence_is_setup:
         logger.info(
             "Confluence is not configured or required environment variables are missing."
@@ -143,5 +153,14 @@ def get_available_services() -> dict[str, bool | None]:
         logger.info(
             "Bitbucket is not configured or required environment variables are missing."
         )
+    if not tempo_is_setup:
+        logger.info(
+            "Tempo is not enabled. Set TEMPO_ENABLED=true to enable Tempo tools."
+        )
 
-    return {"confluence": confluence_is_setup, "jira": jira_is_setup, "bitbucket": bitbucket_is_setup}
+    return {
+        "confluence": confluence_is_setup,
+        "jira": jira_is_setup,
+        "bitbucket": bitbucket_is_setup,
+        "tempo": tempo_is_setup,
+    }

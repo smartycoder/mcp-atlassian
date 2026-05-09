@@ -7,6 +7,7 @@ organized by entity type for better maintainability and clarity.
 
 from .agile import JiraBoard, JiraSprint
 from .comment import JiraComment
+from .group import JiraGroup, JiraGroupMember, JiraGroupMembersResult
 from .common import (
     JiraAttachment,
     JiraIssueType,
@@ -52,4 +53,8 @@ __all__ = [
     "JiraIssueLink",
     "JiraLinkedIssue",
     "JiraLinkedIssueFields",
+    # Group models
+    "JiraGroup",
+    "JiraGroupMember",
+    "JiraGroupMembersResult",
 ]

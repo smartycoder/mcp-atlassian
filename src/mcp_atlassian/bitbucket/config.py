@@ -36,6 +36,6 @@ class BitbucketConfig:
     def is_auth_configured(self) -> bool:
         """Check if authentication is configured.
 
-        Returns True if a global PAT is set OR if URL is set (per-request tokens via headers).
+        Returns True if URL is set (supports per-request tokens via headers).
         """
         return bool(self.url)
