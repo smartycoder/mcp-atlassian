@@ -115,10 +115,17 @@ class BitbucketFetcher:
         file_path: str,
         branch: str | None = None,
     ) -> str:
-        """Get the content of a file at a given path and branch."""
-        return self.bb.get_content_of_file(
+        """Get the content of a file at a given path and branch.
+
+        atlassian-python-api returns the raw HTTP body as bytes; decode here so
+        the MCP tool can JSON-serialize the result.
+        """
+        content = self.bb.get_content_of_file(
             project_key, repo_slug, file_path, at=branch
         )
+        if isinstance(content, bytes):
+            return content.decode("utf-8", errors="replace")
+        return content
 
     # --- PR Review & Lifecycle ---
 
@@ -129,10 +136,29 @@ class BitbucketFetcher:
         pr_id: int,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """Get all comments on a pull request."""
-        url = self.bb._url_pull_request_comments(project_key, repo_slug, pr_id)
-        result = self.bb._get_paged(url, params={"limit": limit})
-        return list(result) if result else []
+        """Get all comments on a pull request, including inline comments and threaded replies.
+
+        Uses the PR activities endpoint because Bitbucket Server's /comments endpoint
+        requires a `path` query parameter and only returns inline comments for that path.
+        Activities expose every comment (general + inline) with its reply tree intact.
+        """
+        activities = self.bb.get_pull_requests_activities(
+            project_key, repo_slug, pr_id, limit=limit
+        )
+        comments: list[dict[str, Any]] = []
+        for activity in activities:
+            if activity.get("action") != "COMMENTED":
+                continue
+            comment = activity.get("comment")
+            if not comment:
+                continue
+            anchor = activity.get("commentAnchor")
+            if anchor:
+                comment = {**comment, "commentAnchor": anchor}
+            comments.append(comment)
+            if len(comments) >= limit:
+                break
+        return comments
 
     def add_pr_comment(
         self,
@@ -306,11 +332,20 @@ class BitbucketFetcher:
         pr_id: int,
         context_lines: int = 10,
     ) -> str:
-        """Get the full unified diff of a pull request."""
+        """Get the full unified diff of a pull request.
+
+        With `not_json_response=True` the underlying client returns the raw
+        bytes of the HTTP response; decode so the MCP tool returns str.
+        """
         url = (
             f"{self.bb._url_pull_request(project_key, repo_slug, pr_id)}/diff"
         )
-        return self.bb.get(url, params={"contextLines": context_lines}, not_json_response=True)
+        result = self.bb.get(
+            url, params={"contextLines": context_lines}, not_json_response=True
+        )
+        if isinstance(result, bytes):
+            return result.decode("utf-8", errors="replace")
+        return result
 
     def get_pr_changes(
         self,
@@ -342,18 +377,25 @@ class BitbucketFetcher:
     ) -> list[dict[str, Any]]:
         """Search for code in a repository using Bitbucket Server code search.
 
-        Uses the REST search API (/rest/search/latest/search).
+        Uses POST /rest/search/latest/search with a JSON body. Project/repo
+        scoping goes into the query string itself (`project:KEY repo:slug`),
+        which is the Bitbucket Server search-syntax convention; the request
+        body only accepts `query`, `entities`, and `limits`.
+
         Requires the Bitbucket Server search service to be enabled.
         """
-        url = f"{self.bb.url}/rest/search/latest/search"
-        params = {
-            "query": query,
-            "entities": "code",
-            "limits.primary.count": limit,
-            "repositoryName": repo_slug,
-            "projectKey": project_key,
+        # Use a relative path — self.bb.post prepends the base URL.
+        path = "rest/search/latest/search"
+        scoped_query = f"project:{project_key} repo:{repo_slug} {query}"
+        body = {
+            "query": scoped_query,
+            "entities": {"code": {}},
+            "limits": {"primary": limit, "secondary": limit},
         }
-        result = self.bb.get(url, params=params)
+        # atlassian-python-api passes `data=` as form-encoded; the search API
+        # requires a JSON body, so pass it via `json=` (the underlying requests
+        # call serializes and sets Content-Type: application/json).
+        result = self.bb.post(path, json=body)
         if isinstance(result, dict):
             return result.get("code", {}).get("values", [])
         return []
@@ -489,7 +531,16 @@ class BitbucketFetcher:
             source_commit_id,
         )
 
-    # --- PR Tasks ---
+    # --- PR Tasks (Blocker Comments) ---
+    #
+    # Bitbucket Server 7.2 removed the legacy /tasks REST endpoints. A "task"
+    # is now a PR comment with `severity: BLOCKER` and a `state` of OPEN or
+    # RESOLVED, sharing the comment lifecycle endpoints:
+    #
+    #   GET    /pull-requests/{id}/blocker-comments   -- list
+    #   POST   /pull-requests/{id}/comments           -- create (severity=BLOCKER)
+    #   PUT    /pull-requests/{id}/comments/{id}      -- update text/state
+    #   DELETE /pull-requests/{id}/comments/{id}      -- delete
 
     def get_pr_tasks(
         self,
@@ -497,25 +548,56 @@ class BitbucketFetcher:
         repo_slug: str,
         pr_id: int,
     ) -> list[dict[str, Any]]:
-        """Get all tasks associated with a pull request."""
-        result = self.bb.get_tasks(project_key, repo_slug, pr_id)
+        """List PR tasks (BLOCKER-severity comments) on a pull request."""
+        url = (
+            f"{self.bb._url_pull_request(project_key, repo_slug, pr_id)}"
+            "/blocker-comments"
+        )
+        result = self.bb.get(url)
         if isinstance(result, dict):
             return result.get("values", [])
         return list(result) if result else []
 
     def add_pr_task(
         self,
-        comment_id: int,
+        project_key: str,
+        repo_slug: str,
+        pr_id: int,
         text: str,
+        parent_id: int | None = None,
     ) -> dict[str, Any]:
-        """Add a task anchored to a PR comment."""
-        return self.bb.add_task(comment_id, text)
+        """Create a PR task (BLOCKER-severity comment) on a pull request.
+
+        Pass `parent_id` to thread the task as a reply to an existing comment.
+        Without it, the task is a top-level blocker comment.
+        """
+        url = self.bb._url_pull_request_comments(project_key, repo_slug, pr_id)
+        body: dict[str, Any] = {"text": text, "severity": "BLOCKER"}
+        if parent_id is not None:
+            body["parent"] = {"id": parent_id}
+        return self.bb.post(url, json=body)
 
     def update_pr_task(
         self,
+        project_key: str,
+        repo_slug: str,
+        pr_id: int,
         task_id: int,
         text: str | None = None,
         state: str | None = None,
+        task_version: int = 0,
     ) -> dict[str, Any]:
         """Update a PR task's text and/or state (OPEN or RESOLVED)."""
-        return self.bb.update_task(task_id, text=text, state=state)
+        url = (
+            f"{self.bb._url_pull_request_comments(project_key, repo_slug, pr_id)}"
+            f"/{task_id}"
+        )
+        body: dict[str, Any] = {"version": task_version}
+        if text is not None:
+            body["text"] = text
+        if state is not None:
+            body["state"] = state
+        # atlassian-python-api's `put` JSON-encodes a dict `data` argument
+        # internally (rest_client.py:412 — `data = dumps(data)`). Pass the
+        # dict directly; pre-serializing here would double-encode the body.
+        return self.bb.put(url, data=body)

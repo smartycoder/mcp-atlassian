@@ -760,12 +760,34 @@ async def get_pr_tasks(
 @check_write_access
 async def add_pr_task(
     ctx: Context,
-    comment_id: Annotated[int, Field(description="The ID of the PR comment to anchor the task to")],
+    project_key: Annotated[str, Field(description="The project key (e.g. 'PROJ')")],
+    repo_slug: Annotated[str, Field(description="The repository slug (e.g. 'my-repo')")],
+    pr_id: Annotated[int, Field(description="The pull request ID")],
     text: Annotated[str, Field(description="The task description text")],
+    parent_id: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Optional ID of an existing PR comment to thread the task under. "
+                "Without it, the task is a top-level blocker comment."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
-    """Add a checklist task anchored to a PR comment."""
+    """Add a PR task (a BLOCKER-severity comment) to a pull request.
+
+    Bitbucket Server 7.2+ models tasks as comments with severity=BLOCKER;
+    'task_id' returned here is the comment id used by update/delete.
+    """
     bb = await get_bitbucket_fetcher(ctx)
-    result = bb.add_pr_task(comment_id=comment_id, text=text)
+    result = bb.add_pr_task(
+        project_key=project_key,
+        repo_slug=repo_slug,
+        pr_id=pr_id,
+        text=text,
+        parent_id=parent_id,
+    )
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -773,6 +795,9 @@ async def add_pr_task(
 @check_write_access
 async def update_pr_task(
     ctx: Context,
+    project_key: Annotated[str, Field(description="The project key (e.g. 'PROJ')")],
+    repo_slug: Annotated[str, Field(description="The repository slug (e.g. 'my-repo')")],
+    pr_id: Annotated[int, Field(description="The pull request ID")],
     task_id: Annotated[int, Field(description="The ID of the task to update")],
     text: Annotated[
         str | None,
@@ -782,8 +807,20 @@ async def update_pr_task(
         str | None,
         Field(description="New state: OPEN or RESOLVED", default=None),
     ] = None,
+    task_version: Annotated[
+        int,
+        Field(description="Expected task (comment) version for optimistic locking", default=0),
+    ] = 0,
 ) -> str:
     """Update a PR task's text and/or state (OPEN or RESOLVED)."""
     bb = await get_bitbucket_fetcher(ctx)
-    result = bb.update_pr_task(task_id=task_id, text=text, state=state)
+    result = bb.update_pr_task(
+        project_key=project_key,
+        repo_slug=repo_slug,
+        pr_id=pr_id,
+        task_id=task_id,
+        text=text,
+        state=state,
+        task_version=task_version,
+    )
     return json.dumps(result, indent=2, ensure_ascii=False)

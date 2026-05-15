@@ -807,16 +807,25 @@ async def test_delete_tag(bitbucket_client, mock_bitbucket_fetcher):
 
 @pytest.mark.anyio
 async def test_add_pr_task(bitbucket_client, mock_bitbucket_fetcher):
-    """Test the add_pr_task tool adds a task to a PR comment."""
+    """Test the add_pr_task tool creates a BLOCKER comment on a PR."""
     response = await bitbucket_client.call_tool(
         "add_pr_task",
-        {"comment_id": 10, "text": "New task"},
+        {
+            "project_key": "PROJ",
+            "repo_slug": "my-repo",
+            "pr_id": 1,
+            "text": "New task",
+        },
     )
     content = json.loads(response[0].text)
     assert content["id"] == 3
     assert content["text"] == "New task"
     mock_bitbucket_fetcher.add_pr_task.assert_called_once_with(
-        comment_id=10, text="New task"
+        project_key="PROJ",
+        repo_slug="my-repo",
+        pr_id=1,
+        text="New task",
+        parent_id=None,
     )
 
 
@@ -825,10 +834,23 @@ async def test_update_pr_task(bitbucket_client, mock_bitbucket_fetcher):
     """Test the update_pr_task tool updates a task state."""
     response = await bitbucket_client.call_tool(
         "update_pr_task",
-        {"task_id": 1, "state": "RESOLVED"},
+        {
+            "project_key": "PROJ",
+            "repo_slug": "my-repo",
+            "pr_id": 1,
+            "task_id": 1,
+            "state": "RESOLVED",
+            "task_version": 0,
+        },
     )
     content = json.loads(response[0].text)
     assert content["state"] == "RESOLVED"
     mock_bitbucket_fetcher.update_pr_task.assert_called_once_with(
-        task_id=1, text=None, state="RESOLVED"
+        project_key="PROJ",
+        repo_slug="my-repo",
+        pr_id=1,
+        task_id=1,
+        text=None,
+        state="RESOLVED",
+        task_version=0,
     )

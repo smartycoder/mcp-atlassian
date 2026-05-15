@@ -118,18 +118,84 @@ def test_get_file_content(fetcher, mock_bb_api):
     )
 
 
+def test_get_file_content_decodes_bytes(fetcher, mock_bb_api):
+    """When the upstream returns bytes, get_file_content decodes to str."""
+    mock_bb_api.get_content_of_file.return_value = b"binary-ish content"
+    result = fetcher.get_file_content("PROJ", "my-repo", "README.md")
+    assert result == "binary-ish content"
+    assert isinstance(result, str)
+
+
 # --- PR Review & Lifecycle ---
 
 
-def test_get_pr_comments(fetcher, mock_bb_api):
-    """get_pr_comments calls _url_pull_request_comments and _get_paged."""
-    mock_bb_api._url_pull_request_comments.return_value = "http://bb/comments"
-    mock_bb_api._get_paged.return_value = [{"id": 10, "text": "LGTM"}]
+def test_get_pr_comments_filters_commented_activities(fetcher, mock_bb_api):
+    """get_pr_comments reads /activities and keeps only COMMENTED entries."""
+    mock_bb_api.get_pull_requests_activities.return_value = iter(
+        [
+            {"action": "OPENED"},
+            {"action": "COMMENTED", "comment": {"id": 10, "text": "LGTM"}},
+            {"action": "APPROVED"},
+            {"action": "COMMENTED", "comment": {"id": 11, "text": "nit"}},
+        ]
+    )
     result = fetcher.get_pr_comments("PROJ", "my-repo", 42)
-    assert isinstance(result, list)
-    assert result[0]["id"] == 10
-    mock_bb_api._url_pull_request_comments.assert_called_once_with("PROJ", "my-repo", 42)
-    mock_bb_api._get_paged.assert_called_once_with("http://bb/comments", params={"limit": 100})
+    assert [c["id"] for c in result] == [10, 11]
+    mock_bb_api.get_pull_requests_activities.assert_called_once_with(
+        "PROJ", "my-repo", 42, limit=100
+    )
+
+
+def test_get_pr_comments_attaches_inline_anchor(fetcher, mock_bb_api):
+    """Inline comments carry the activity's commentAnchor onto the comment dict."""
+    mock_bb_api.get_pull_requests_activities.return_value = iter(
+        [
+            {
+                "action": "COMMENTED",
+                "comment": {"id": 20, "text": "inline note"},
+                "commentAnchor": {"path": "src/app.py", "line": 42, "lineType": "ADDED"},
+            },
+            {
+                "action": "COMMENTED",
+                "comment": {"id": 21, "text": "general note"},
+            },
+        ]
+    )
+    result = fetcher.get_pr_comments("PROJ", "my-repo", 42)
+    assert result[0]["commentAnchor"] == {"path": "src/app.py", "line": 42, "lineType": "ADDED"}
+    assert "commentAnchor" not in result[1]
+
+
+def test_get_pr_comments_skips_commented_activity_without_comment(fetcher, mock_bb_api):
+    """A COMMENTED activity with no comment payload is ignored, not crashed on."""
+    mock_bb_api.get_pull_requests_activities.return_value = iter(
+        [
+            {"action": "COMMENTED"},
+            {"action": "COMMENTED", "comment": None},
+            {"action": "COMMENTED", "comment": {"id": 30, "text": "real"}},
+        ]
+    )
+    result = fetcher.get_pr_comments("PROJ", "my-repo", 42)
+    assert [c["id"] for c in result] == [30]
+
+
+def test_get_pr_comments_honors_limit_as_max_comments(fetcher, mock_bb_api):
+    """limit caps the number of comments returned, not activities scanned."""
+    activities = [
+        {"action": "COMMENTED", "comment": {"id": i}} for i in range(5)
+    ]
+    mock_bb_api.get_pull_requests_activities.return_value = iter(activities)
+    result = fetcher.get_pr_comments("PROJ", "my-repo", 42, limit=3)
+    assert [c["id"] for c in result] == [0, 1, 2]
+    mock_bb_api.get_pull_requests_activities.assert_called_once_with(
+        "PROJ", "my-repo", 42, limit=3
+    )
+
+
+def test_get_pr_comments_empty(fetcher, mock_bb_api):
+    """An empty activity stream yields an empty list."""
+    mock_bb_api.get_pull_requests_activities.return_value = iter([])
+    assert fetcher.get_pr_comments("PROJ", "my-repo", 42) == []
 
 
 def test_add_pr_comment(fetcher, mock_bb_api):
@@ -355,21 +421,26 @@ def test_update_file(fetcher, mock_bb_api):
 
 
 def test_get_pr_tasks_with_dict_response(fetcher, mock_bb_api):
-    """get_pr_tasks extracts 'values' when upstream returns a paginated dict."""
-    mock_bb_api.get_tasks.return_value = {"values": [{"id": 1, "text": "Fix this"}], "size": 1}
+    """get_pr_tasks hits /blocker-comments and extracts 'values'."""
+    mock_bb_api._url_pull_request.return_value = "rest/api/1.0/.../pull-requests/42"
+    mock_bb_api.get.return_value = {
+        "values": [{"id": 1, "text": "Fix this", "severity": "BLOCKER", "state": "OPEN"}],
+        "size": 1,
+    }
     result = fetcher.get_pr_tasks("PROJ", "my-repo", 42)
-    assert isinstance(result, list)
     assert result[0]["id"] == 1
-    mock_bb_api.get_tasks.assert_called_once_with("PROJ", "my-repo", 42)
+    assert result[0]["severity"] == "BLOCKER"
+    mock_bb_api.get.assert_called_once_with(
+        "rest/api/1.0/.../pull-requests/42/blocker-comments"
+    )
 
 
 def test_get_pr_tasks_with_list_response(fetcher, mock_bb_api):
-    """get_pr_tasks wraps result in list when upstream returns an iterable."""
-    mock_bb_api.get_tasks.return_value = [{"id": 2, "text": "Do that"}]
+    """If the endpoint ever returns a bare list, get_pr_tasks still returns a list."""
+    mock_bb_api._url_pull_request.return_value = "rest/api/1.0/.../pull-requests/42"
+    mock_bb_api.get.return_value = [{"id": 2, "text": "Do that"}]
     result = fetcher.get_pr_tasks("PROJ", "my-repo", 42)
-    assert isinstance(result, list)
     assert result[0]["id"] == 2
-    mock_bb_api.get_tasks.assert_called_once_with("PROJ", "my-repo", 42)
 
 
 def test_update_pr_comment(fetcher, mock_bb_api):
@@ -418,15 +489,24 @@ def test_add_pr_reviewer(fetcher, mock_bb_api):
     assert call_data["version"] == 3
 
 
-def test_get_pr_diff(fetcher, mock_bb_api):
-    """get_pr_diff calls the PR diff endpoint with contextLines."""
+def test_get_pr_diff_decodes_bytes(fetcher, mock_bb_api):
+    """get_pr_diff calls the PR diff endpoint and decodes bytes -> str."""
     mock_bb_api._url_pull_request.return_value = "http://bb/pr/42"
     mock_bb_api.get.return_value = b"diff --git a/foo b/foo"
     result = fetcher.get_pr_diff("PROJ", "my-repo", 42, context_lines=5)
-    assert result == b"diff --git a/foo b/foo"
+    assert result == "diff --git a/foo b/foo"
+    assert isinstance(result, str)
     mock_bb_api.get.assert_called_once_with(
         "http://bb/pr/42/diff", params={"contextLines": 5}, not_json_response=True
     )
+
+
+def test_get_pr_diff_passes_through_str(fetcher, mock_bb_api):
+    """If the upstream already returns str, get_pr_diff leaves it alone."""
+    mock_bb_api._url_pull_request.return_value = "http://bb/pr/42"
+    mock_bb_api.get.return_value = "diff --git a/foo b/foo"
+    result = fetcher.get_pr_diff("PROJ", "my-repo", 42)
+    assert result == "diff --git a/foo b/foo"
 
 
 def test_get_commit(fetcher, mock_bb_api):
@@ -438,23 +518,26 @@ def test_get_commit(fetcher, mock_bb_api):
 
 
 def test_search_code(fetcher, mock_bb_api):
-    """search_code calls the REST search endpoint."""
-    mock_bb_api.url = "https://bitbucket.example.com"
-    mock_bb_api.get.return_value = {
+    """search_code POSTs to /rest/search/latest/search with a scoped JSON body."""
+    mock_bb_api.post.return_value = {
         "code": {"values": [{"file": {"path": "src/main.py"}}]}
     }
     result = fetcher.search_code("PROJ", "my-repo", "def main", limit=10)
     assert result[0]["file"]["path"] == "src/main.py"
-    mock_bb_api.get.assert_called_once_with(
-        "https://bitbucket.example.com/rest/search/latest/search",
-        params={
-            "query": "def main",
-            "entities": "code",
-            "limits.primary.count": 10,
-            "repositoryName": "my-repo",
-            "projectKey": "PROJ",
+    mock_bb_api.post.assert_called_once_with(
+        "rest/search/latest/search",
+        json={
+            "query": "project:PROJ repo:my-repo def main",
+            "entities": {"code": {}},
+            "limits": {"primary": 10, "secondary": 10},
         },
     )
+
+
+def test_search_code_returns_empty_on_unexpected_response(fetcher, mock_bb_api):
+    """A non-dict response yields an empty list, not a crash."""
+    mock_bb_api.post.return_value = None
+    assert fetcher.search_code("PROJ", "my-repo", "x") == []
 
 
 def test_delete_tag(fetcher, mock_bb_api):
@@ -464,17 +547,63 @@ def test_delete_tag(fetcher, mock_bb_api):
     mock_bb_api.delete_tag.assert_called_once_with("PROJ", "my-repo", "v1.0.0")
 
 
-def test_add_pr_task(fetcher, mock_bb_api):
-    """add_pr_task delegates to bb.add_task with comment anchor."""
-    mock_bb_api.add_task.return_value = {"id": 3, "text": "New task", "state": "OPEN"}
-    result = fetcher.add_pr_task(10, "New task")
+def test_add_pr_task_top_level(fetcher, mock_bb_api):
+    """add_pr_task posts a severity=BLOCKER comment without parent."""
+    mock_bb_api._url_pull_request_comments.return_value = (
+        "rest/api/1.0/.../pull-requests/42/comments"
+    )
+    mock_bb_api.post.return_value = {
+        "id": 3, "text": "New task", "severity": "BLOCKER", "state": "OPEN"
+    }
+    result = fetcher.add_pr_task("PROJ", "my-repo", 42, "New task")
     assert result["id"] == 3
-    mock_bb_api.add_task.assert_called_once_with(10, "New task")
+    assert result["severity"] == "BLOCKER"
+    mock_bb_api.post.assert_called_once_with(
+        "rest/api/1.0/.../pull-requests/42/comments",
+        json={"text": "New task", "severity": "BLOCKER"},
+    )
 
 
-def test_update_pr_task(fetcher, mock_bb_api):
-    """update_pr_task delegates to bb.update_task with state."""
-    mock_bb_api.update_task.return_value = {"id": 1, "state": "RESOLVED"}
-    result = fetcher.update_pr_task(1, state="RESOLVED")
+def test_add_pr_task_as_reply(fetcher, mock_bb_api):
+    """parent_id threads the task as a reply to an existing comment."""
+    mock_bb_api._url_pull_request_comments.return_value = (
+        "rest/api/1.0/.../pull-requests/42/comments"
+    )
+    mock_bb_api.post.return_value = {"id": 4}
+    fetcher.add_pr_task("PROJ", "my-repo", 42, "Reply task", parent_id=99)
+    mock_bb_api.post.assert_called_once_with(
+        "rest/api/1.0/.../pull-requests/42/comments",
+        json={"text": "Reply task", "severity": "BLOCKER", "parent": {"id": 99}},
+    )
+
+
+def test_update_pr_task_state_only(fetcher, mock_bb_api):
+    """update_pr_task PUTs the new state at the comment URL with a dict body."""
+    mock_bb_api._url_pull_request_comments.return_value = (
+        "rest/api/1.0/.../pull-requests/42/comments"
+    )
+    mock_bb_api.put.return_value = {"id": 1, "state": "RESOLVED", "version": 2}
+    result = fetcher.update_pr_task(
+        "PROJ", "my-repo", 42, task_id=1, state="RESOLVED", task_version=1
+    )
     assert result["state"] == "RESOLVED"
-    mock_bb_api.update_task.assert_called_once_with(1, text=None, state="RESOLVED")
+    mock_bb_api.put.assert_called_once_with(
+        "rest/api/1.0/.../pull-requests/42/comments/1",
+        data={"version": 1, "state": "RESOLVED"},
+    )
+
+
+def test_update_pr_task_text_and_state(fetcher, mock_bb_api):
+    """Both text and state are sent in the same PUT when provided."""
+    mock_bb_api._url_pull_request_comments.return_value = (
+        "rest/api/1.0/.../pull-requests/42/comments"
+    )
+    mock_bb_api.put.return_value = {"id": 1}
+    fetcher.update_pr_task(
+        "PROJ", "my-repo", 42,
+        task_id=1, text="edited", state="OPEN", task_version=3,
+    )
+    mock_bb_api.put.assert_called_once_with(
+        "rest/api/1.0/.../pull-requests/42/comments/1",
+        data={"version": 3, "text": "edited", "state": "OPEN"},
+    )
